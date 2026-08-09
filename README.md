@@ -25,12 +25,17 @@ virtual control input, and route `open_url` actions.
 ## Protocol Status
 
 `keyro-protocol` is the intended source of truth for Core, Studio, and Device
-wire contracts. It is not yet present in this repository or available locally,
-so this repository does not define a stable IPC wire contract yet.
+wire contracts. The protocol source currently lives in this repository under
+`protocol/` so Core can own the contract while keeping schemas, shared test
+vectors, and TypeScript artifacts easy for Studio to consume.
 
-The temporary IPC crate is a local development transport around Core application
-commands and events. Replace its message mapping with generated
-`keyro-protocol` types once protocol v0.1.0 and test vectors are available.
+The IPC crate maps protocol DTOs into Core application commands. Keep protocol
+DTOs separate from Core domain/application models so schema evolution does not
+leak into Core internals.
+
+Protocol `0.x` handshakes require an exact version match. Studio should consume
+the checked-in schema, test vectors, and TypeScript artifact from `protocol/`
+instead of copying Core internals.
 
 ## Development
 

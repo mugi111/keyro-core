@@ -11,6 +11,7 @@ anyhow.workspace = true
 keyro-core-app.workspace = true
 keyro-core-ipc.workspace = true
 keyro-core-platform.workspace = true
+keyro-core-protocol.workspace = true
 keyro-core-storage-sqlite.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
