@@ -8,10 +8,13 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+fs2.workspace = true
 keyro-core-app.workspace = true
 keyro-core-ipc.workspace = true
 keyro-core-platform.workspace = true
 keyro-core-storage-sqlite.workspace = true
 tracing.workspace = true
-tracing-appender.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
