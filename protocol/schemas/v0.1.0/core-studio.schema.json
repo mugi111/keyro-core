@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://keyro.dev/protocol/v0.1.0/core-studio.schema.json",
+  "title": "Keyro Core-Studio Protocol v0.1",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/clientEnvelope" },
+    { "$ref": "#/$defs/serverMessage" }
+  ],
+  "$defs": {
+    "protocolVersion": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "additionalProperties": false,
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "clientEnvelope": {
+      "type": "object",
+      "required": ["request_id", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1 },
+        "message": { "$ref": "#/$defs/clientMessage" }
+      }
+    },
+    "clientMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/handshake" },
+        { "$ref": "#/$defs/listProfiles" },
+        { "$ref": "#/$defs/setActiveProfile" },
+        { "$ref": "#/$defs/saveAssignment" },
+        { "$ref": "#/$defs/virtualControlInput" }
+      ]
+    },
+    "handshake": {
+      "type": "object",
+      "required": ["type", "component", "component_version", "protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "handshake" },
+        "component": { "const": "studio" },
+        "component_version": { "type": "string", "minLength": 1 },
+        "protocol": { "$ref": "#/$defs/protocolVersion" }
+      }
+    },
+    "listProfiles": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "list_profiles" }
+      }
+    },
+    "setActiveProfile": {
+      "type": "object",
+      "required": ["type", "profile_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "set_active_profile" },
+        "profile_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "saveAssignment": {
+      "type": "object",
+      "required": ["type", "assignment"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "save_assignment" },
+        "assignment": { "$ref": "#/$defs/assignment" }
+      }
+    },
+    "virtualControlInput": {
+      "type": "object",
+      "required": ["type", "control"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "virtual_control_input" },
+        "control": { "$ref": "#/$defs/control" }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "required": ["profile_id", "control", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": { "type": "string", "format": "uuid" },
+        "control": { "$ref": "#/$defs/control" },
+        "action": { "$ref": "#/$defs/action" }
+      }
+    },
+    "control": {
+      "oneOf": [
+        { "$ref": "#/$defs/keyControl" },
+        { "$ref": "#/$defs/encoderControl" }
+      ]
+    },
+    "keyControl": {
+      "type": "object",
+      "required": ["kind", "page", "key"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "key" },
+        "page": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "key": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    },
+    "encoderControl": {
+      "type": "object",
+      "required": ["kind", "page", "encoder", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "encoder" },
+        "page": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "encoder": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "operation": { "enum": ["left", "right", "press"] }
+      }
+    },
+    "action": {
+      "oneOf": [
+        { "$ref": "#/$defs/openUrlAction" }
+      ]
+    },
+    "openUrlAction": {
+      "type": "object",
+      "required": ["kind", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "open_url" },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["id", "name", "is_active"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "is_active": { "type": "boolean" }
+      }
+    },
+    "serverMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/handshakeAccepted" },
+        { "$ref": "#/$defs/profiles" },
+        { "$ref": "#/$defs/acknowledged" },
+        { "$ref": "#/$defs/actionEvent" },
+        { "$ref": "#/$defs/error" }
+      ]
+    },
+    "handshakeAccepted": {
+      "type": "object",
+      "required": ["type", "request_id", "core_version", "protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "handshake_accepted" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "core_version": { "type": "string", "minLength": 1 },
+        "protocol": { "$ref": "#/$defs/protocolVersion" }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "required": ["type", "request_id", "profiles"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "profiles" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/profile" }
+        }
+      }
+    },
+    "acknowledged": {
+      "type": "object",
+      "required": ["type", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "acknowledged" },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "actionEvent": {
+      "type": "object",
+      "required": ["type", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "action_event" },
+        "event": { "$ref": "#/$defs/actionEventPayload" }
+      }
+    },
+    "actionEventPayload": {
+      "oneOf": [
+        { "$ref": "#/$defs/actionRunning" },
+        { "$ref": "#/$defs/actionSucceeded" },
+        { "$ref": "#/$defs/actionFailed" }
+      ]
+    },
+    "actionRunning": {
+      "type": "object",
+      "required": ["state", "execution_id", "profile_id", "control"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "const": "running" },
+        "execution_id": { "type": "string", "format": "uuid" },
+        "profile_id": { "type": "string", "format": "uuid" },
+        "control": { "$ref": "#/$defs/control" }
+      }
+    },
+    "actionSucceeded": {
+      "type": "object",
+      "required": ["state", "execution_id"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "const": "succeeded" },
+        "execution_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "actionFailed": {
+      "type": "object",
+      "required": ["state", "execution_id", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "const": "failed" },
+        "execution_id": { "type": "string", "format": "uuid" },
+        "code": {
+          "enum": [
+            "open_url_failed",
+            "no_action_assigned",
+            "validation_failed",
+            "internal"
+          ]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "request_id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "error" },
+        "request_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "incompatible_protocol",
+                "unknown_message",
+                "validation_failed",
+                "internal"
+              ]
+            },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

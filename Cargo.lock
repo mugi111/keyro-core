@@ -303,6 +303,7 @@ dependencies = [
  "keyro-core-app",
  "keyro-core-ipc",
  "keyro-core-platform",
+ "keyro-core-protocol",
  "keyro-core-storage-sqlite",
  "tempfile",
  "tracing",
@@ -333,6 +334,7 @@ version = "0.1.0"
 dependencies = [
  "keyro-core-app",
  "keyro-core-domain",
+ "keyro-core-protocol",
  "serde",
  "serde_json",
  "thiserror",
@@ -345,6 +347,16 @@ dependencies = [
  "keyro-core-app",
  "keyro-core-domain",
  "thiserror",
+]
+
+[[package]]
+name = "keyro-core-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

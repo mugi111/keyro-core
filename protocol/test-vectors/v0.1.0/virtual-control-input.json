@@ -1,0 +1,11 @@
+{
+  "request_id": "req-virtual-key-press",
+  "message": {
+    "type": "virtual_control_input",
+    "control": {
+      "kind": "key",
+      "page": 0,
+      "key": 0
+    }
+  }
+}

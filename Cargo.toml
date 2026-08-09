@@ -4,6 +4,7 @@ members = [
   "crates/core-domain",
   "crates/core-ipc",
   "crates/core-platform",
+  "crates/core-protocol",
   "crates/core-storage-sqlite",
   "crates/keyro-core",
 ]
@@ -22,6 +23,7 @@ keyro-core-app = { path = "crates/core-app" }
 keyro-core-domain = { path = "crates/core-domain" }
 keyro-core-ipc = { path = "crates/core-ipc" }
 keyro-core-platform = { path = "crates/core-platform" }
+keyro-core-protocol = { path = "crates/core-protocol" }
 keyro-core-storage-sqlite = { path = "crates/core-storage-sqlite" }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0.204", features = ["derive"] }

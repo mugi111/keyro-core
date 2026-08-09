@@ -1,6 +1,9 @@
 use anyhow::Context;
 use keyro_core_app::{AppError, CoreEvent, CoreService, EventSink};
-use keyro_core_ipc::{decode_dev_command, dev_response_from_core, encode_dev_reply, DevReply};
+use keyro_core_ipc::{
+    decode_protocol_dispatch, encode_protocol_message, error_message, response_from_core,
+    ProtocolDispatch,
+};
 use keyro_core_platform::SystemUrlOpener;
 use keyro_core_storage_sqlite::SqliteProfileRepository;
 use logging::{LogRetention, RotatingLogWriter};
@@ -33,7 +36,7 @@ fn main() -> anyhow::Result<()> {
         profile_name = %profile.name,
         "Keyro Core initialized"
     );
-    warn!("running temporary development IPC; replace with keyro-protocol v0.1.0 adapter before claiming protocol compatibility");
+    warn!("running development IPC listener; production framing, sessions, and backpressure are not implemented yet");
     run_dev_ipc(repository, data_dir.join("keyro-core-dev.sock"))?;
 
     Ok(())
@@ -161,23 +164,17 @@ fn handle_dev_connection_inner(
 
     for line in reader.lines() {
         let line = line?;
-        let reply = match decode_dev_command(&line) {
-            Ok((request_id, command)) => match service.handle_command(command) {
-                Ok(response) => DevReply::Response {
-                    request_id,
-                    response: dev_response_from_core(response),
-                },
-                Err(error) => DevReply::Error {
-                    request_id,
-                    message: error.to_string(),
-                },
-            },
-            Err(error) => DevReply::Error {
-                request_id: "unknown".to_owned(),
-                message: error.to_string(),
+        let reply = match decode_protocol_dispatch(&line, env!("CARGO_PKG_VERSION")) {
+            ProtocolDispatch::Immediate(message) => message,
+            ProtocolDispatch::Command {
+                request_id,
+                command,
+            } => match service.handle_command(command) {
+                Ok(response) => response_from_core(request_id, response),
+                Err(error) => error_message(Some(request_id), error),
             },
         };
-        let encoded = encode_dev_reply(&reply)?;
+        let encoded = encode_protocol_message(&reply)?;
         writeln!(stream, "{encoded}")?;
     }
 
