@@ -3,10 +3,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, SystemTime};
 use tracing_subscriber::fmt::MakeWriter;
 
 const LOG_FILE_NAME: &str = "keyro-core.log";
+const RETENTION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, Copy)]
 pub struct LogRetention {
@@ -34,17 +36,18 @@ pub struct RotatingLogWriter {
 
 impl RotatingLogWriter {
     pub fn new(log_dir: impl Into<PathBuf>, retention: LogRetention) -> io::Result<Self> {
+        validate_retention(retention)?;
         let log_dir = log_dir.into();
         fs::create_dir_all(&log_dir)?;
         cleanup_logs(&log_dir, retention)?;
         let file = open_current_log(&log_dir)?;
-        Ok(Self {
-            state: Arc::new(Mutex::new(LogState {
-                log_dir,
-                retention,
-                file,
-            })),
-        })
+        let state = Arc::new(Mutex::new(LogState {
+            log_dir,
+            retention,
+            file,
+        }));
+        spawn_retention_maintenance(&state);
+        Ok(Self { state })
     }
 }
 
@@ -88,14 +91,23 @@ struct LogState {
 
 impl LogState {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
         let current_size = self.file.metadata()?.len();
-        if current_size > 0
-            && current_size.saturating_add(buf.len() as u64) > self.retention.max_file_bytes
+        if current_size >= self.retention.max_file_bytes
+            || current_size > 0
+                && current_size.saturating_add(buf.len() as u64) > self.retention.max_file_bytes
         {
             self.rotate()?;
         }
-        let written = self.file.write(buf)?;
-        cleanup_logs(&self.log_dir, self.retention)?;
+
+        let current_size = self.file.metadata()?.len();
+        let available_bytes = self.retention.max_file_bytes.saturating_sub(current_size);
+        let write_len = available_bytes.min(buf.len() as u64) as usize;
+        let written = self.file.write(&buf[..write_len])?;
+        self.cleanup_retention()?;
         Ok(written)
     }
 
@@ -105,6 +117,64 @@ impl LogState {
         self.file = open_current_log(&self.log_dir)?;
         Ok(())
     }
+
+    fn cleanup_retention(&mut self) -> io::Result<()> {
+        if current_log_needs_rotation(&self.file, self.retention)? {
+            self.rotate()?;
+        }
+        cleanup_logs(&self.log_dir, self.retention)
+    }
+}
+
+fn validate_retention(retention: LogRetention) -> io::Result<()> {
+    if retention.max_file_bytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "log max_file_bytes must be greater than zero",
+        ));
+    }
+    if retention.max_total_bytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "log max_total_bytes must be greater than zero",
+        ));
+    }
+    if retention.max_files == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "log max_files must be greater than zero",
+        ));
+    }
+    if retention.max_total_bytes < retention.max_file_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "log max_total_bytes must be at least max_file_bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn spawn_retention_maintenance(state: &Arc<Mutex<LogState>>) {
+    let state = Arc::downgrade(state);
+    thread::spawn(move || loop {
+        thread::sleep(RETENTION_MAINTENANCE_INTERVAL);
+        let Some(state) = state.upgrade() else {
+            break;
+        };
+        let Ok(mut state) = state.lock() else {
+            break;
+        };
+        let _ = state.cleanup_retention();
+    });
+}
+
+fn current_log_needs_rotation(file: &File, retention: LogRetention) -> io::Result<bool> {
+    let metadata = file.metadata()?;
+    if metadata.len() >= retention.max_file_bytes {
+        return Ok(true);
+    }
+    let cutoff = retention_cutoff(retention)?;
+    Ok(metadata.modified().is_ok_and(|modified| modified < cutoff))
 }
 
 fn open_current_log(log_dir: &Path) -> io::Result<File> {
@@ -150,10 +220,7 @@ fn rotated_log_path(log_dir: &Path, index: usize) -> PathBuf {
 }
 
 fn cleanup_logs(log_dir: &Path, retention: LogRetention) -> io::Result<()> {
-    let cutoff = SystemTime::now()
-        .checked_sub(retention.max_age)
-        .context("invalid log retention age")
-        .map_err(io::Error::other)?;
+    let cutoff = retention_cutoff(retention)?;
 
     let mut retained = Vec::new();
     for entry in fs::read_dir(log_dir)? {
@@ -168,7 +235,7 @@ fn cleanup_logs(log_dir: &Path, retention: LogRetention) -> io::Result<()> {
         let Ok(modified) = metadata.modified() else {
             continue;
         };
-        if modified < cutoff {
+        if modified < cutoff || metadata.len() > retention.max_file_bytes {
             fs::remove_file(path)?;
         } else {
             retained.push(LogFile {
@@ -206,6 +273,13 @@ fn cleanup_logs(log_dir: &Path, retention: LogRetention) -> io::Result<()> {
     Ok(())
 }
 
+fn retention_cutoff(retention: LogRetention) -> io::Result<SystemTime> {
+    SystemTime::now()
+        .checked_sub(retention.max_age)
+        .context("invalid log retention age")
+        .map_err(io::Error::other)
+}
+
 struct LogFile {
     is_current: bool,
     path: PathBuf,
@@ -224,6 +298,61 @@ fn is_keyro_log(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_retention_matches_product_policy() {
+        let retention = LogRetention::default();
+
+        assert_eq!(retention.max_file_bytes, 5 * 1024 * 1024);
+        assert_eq!(retention.max_total_bytes, 50 * 1024 * 1024);
+        assert_eq!(retention.max_files, 10);
+        assert_eq!(retention.max_age, Duration::from_secs(14 * 24 * 60 * 60));
+    }
+
+    #[test]
+    fn rejects_invalid_retention_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let valid = LogRetention {
+            max_file_bytes: 1,
+            max_total_bytes: 1,
+            max_files: 1,
+            max_age: Duration::from_secs(60),
+        };
+
+        assert!(RotatingLogWriter::new(
+            temp.path(),
+            LogRetention {
+                max_file_bytes: 0,
+                ..valid
+            }
+        )
+        .is_err());
+        assert!(RotatingLogWriter::new(
+            temp.path(),
+            LogRetention {
+                max_total_bytes: 0,
+                ..valid
+            }
+        )
+        .is_err());
+        assert!(RotatingLogWriter::new(
+            temp.path(),
+            LogRetention {
+                max_files: 0,
+                ..valid
+            }
+        )
+        .is_err());
+        assert!(RotatingLogWriter::new(
+            temp.path(),
+            LogRetention {
+                max_file_bytes: 2,
+                max_total_bytes: 1,
+                ..valid
+            }
+        )
+        .is_err());
+    }
 
     #[test]
     fn rotates_when_current_file_exceeds_limit() {
@@ -292,6 +421,35 @@ mod tests {
     }
 
     #[test]
+    fn splits_large_writes_across_rotated_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let retention = LogRetention {
+            max_file_bytes: 4,
+            max_total_bytes: 40,
+            max_files: 10,
+            max_age: Duration::from_secs(60),
+        };
+        let writer = RotatingLogWriter::new(temp.path(), retention).unwrap();
+        let mut handle = writer.make_writer();
+
+        handle.write_all(b"1234567890").unwrap();
+        handle.flush().unwrap();
+
+        let logs = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                is_keyro_log(&path).then_some(path)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(logs.len() >= 3);
+        for path in logs {
+            assert!(path.metadata().unwrap().len() <= retention.max_file_bytes);
+        }
+    }
+
+    #[test]
     fn startup_cleanup_enforces_count_and_total_bytes() {
         let temp = tempfile::tempdir().unwrap();
         for index in 0..5 {
@@ -324,6 +482,57 @@ mod tests {
             .sum::<u64>();
         assert!(logs.len() <= retention.max_files);
         assert!(total_bytes <= retention.max_total_bytes);
+        assert!(temp.path().join("keyro-core.log").exists());
+    }
+
+    #[test]
+    fn cleanup_ignores_unrelated_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let unrelated = temp.path().join("studio.log");
+        fs::write(&unrelated, b"not a keyro core log").unwrap();
+        fs::write(temp.path().join("keyro-core.log"), b"12345").unwrap();
+
+        let _writer = RotatingLogWriter::new(temp.path(), LogRetention::default()).unwrap();
+
+        assert!(unrelated.exists());
+    }
+
+    #[test]
+    fn startup_cleanup_removes_oversized_core_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("keyro-core.0.log"), b"12345").unwrap();
+        fs::write(temp.path().join("keyro-core.log"), b"12345").unwrap();
+        let retention = LogRetention {
+            max_file_bytes: 4,
+            max_total_bytes: 40,
+            max_files: 10,
+            max_age: Duration::from_secs(60),
+        };
+
+        let _writer = RotatingLogWriter::new(temp.path(), retention).unwrap();
+
+        assert!(!temp.path().join("keyro-core.0.log").exists());
+        assert!(temp.path().join("keyro-core.log").exists());
+        assert_eq!(
+            temp.path().join("keyro-core.log").metadata().unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    fn startup_cleanup_removes_expired_core_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("keyro-core.0.log"), b"12345").unwrap();
+        let retention = LogRetention {
+            max_file_bytes: 10,
+            max_total_bytes: 40,
+            max_files: 10,
+            max_age: Duration::ZERO,
+        };
+
+        let _writer = RotatingLogWriter::new(temp.path(), retention).unwrap();
+
+        assert!(!temp.path().join("keyro-core.0.log").exists());
         assert!(temp.path().join("keyro-core.log").exists());
     }
 }

@@ -16,11 +16,12 @@ mod logging;
 mod single_instance;
 
 fn main() -> anyhow::Result<()> {
-    init_logging()?;
-
     let data_dir = default_data_dir().context("failed to resolve Keyro data directory")?;
     std::fs::create_dir_all(&data_dir).context("failed to create Keyro data directory")?;
     let _single_instance_guard = SingleInstanceGuard::acquire(&data_dir)?;
+
+    init_logging()?;
+
     let db_path = data_dir.join("keyro-core.sqlite3");
 
     let repository = SqliteProfileRepository::open(&db_path)

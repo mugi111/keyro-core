@@ -71,5 +71,6 @@ mod tests {
         assert!(second.is_err());
         drop(first);
         assert!(temp.path().join("keyro-core.lock").exists());
+        assert!(SingleInstanceGuard::acquire(temp.path()).is_ok());
     }
 }
