@@ -17,6 +17,7 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 anyhow = "1.0.86"
+fs2 = "0.4.3"
 keyro-core-app = { path = "crates/core-app" }
 keyro-core-domain = { path = "crates/core-domain" }
 keyro-core-ipc = { path = "crates/core-ipc" }
