@@ -1,8 +1,7 @@
 use anyhow::Context;
 use keyro_core_app::{AppError, CoreEvent, CoreService, EventSink};
 use keyro_core_ipc::{
-    decode_protocol_dispatch, encode_protocol_message, error_message, response_from_core,
-    ProtocolDispatch,
+    encode_protocol_message, error_message, response_from_core, ProtocolDispatch, ProtocolSession,
 };
 use keyro_core_platform::SystemUrlOpener;
 use keyro_core_storage_sqlite::SqliteProfileRepository;
@@ -36,7 +35,7 @@ fn main() -> anyhow::Result<()> {
         profile_name = %profile.name,
         "Keyro Core initialized"
     );
-    warn!("running development IPC listener; production framing, sessions, and backpressure are not implemented yet");
+    warn!("running development IPC listener; production framing and backpressure are not implemented yet");
     run_dev_ipc(repository, data_dir.join("keyro-core-dev.sock"))?;
 
     Ok(())
@@ -161,17 +160,21 @@ fn handle_dev_connection_inner(
 ) -> anyhow::Result<()> {
     let reader = BufReader::new(stream.try_clone()?);
     let service = CoreService::new(repository, SystemUrlOpener, LoggingEventSink);
+    let mut session = ProtocolSession::new(env!("CARGO_PKG_VERSION"));
 
     for line in reader.lines() {
         let line = line?;
-        let reply = match decode_protocol_dispatch(&line, env!("CARGO_PKG_VERSION")) {
+        let reply = match session.receive_line(&line) {
             ProtocolDispatch::Immediate(message) => message,
             ProtocolDispatch::Command {
                 request_id,
                 command,
             } => match service.handle_command(command) {
                 Ok(response) => response_from_core(request_id, response),
-                Err(error) => error_message(Some(request_id), error),
+                Err(error) => {
+                    warn!(%request_id, %error, "Core command failed");
+                    error_message(Some(request_id), &error)
+                }
             },
         };
         let encoded = encode_protocol_message(&reply)?;

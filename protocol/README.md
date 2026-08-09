@@ -24,6 +24,13 @@ protocol/
 - TypeScript declarations do not enforce JSON Schema formats, regex patterns,
   or numeric ranges at runtime. Studio should validate IPC JSON with the schema.
 - Protocol `0.x` releases require exact version negotiation during handshake.
+- Each IPC connection must complete a successful handshake before normal
+  command routing. Commands received before handshake, or after an incompatible
+  handshake, return structured errors and must not stop Core.
+- A failed handshake may be retried on the same connection. Once a connection
+  has completed handshake, later handshake messages are rejected as validation
+  errors without closing the established session. Reconnects start with a fresh
+  session and must handshake again.
 - Minor additions must use a new protocol version until a stable compatibility
   policy is introduced.
 - Unknown messages must produce structured errors and must not stop Core.

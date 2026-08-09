@@ -1,4 +1,4 @@
-use keyro_core_app::{CoreCommand, CoreResponse};
+use keyro_core_app::{AppError, CoreCommand, CoreResponse};
 use keyro_core_domain::{Action, Assignment, ControlId, EncoderOperation, ProfileId, SafeUrl};
 use keyro_core_protocol::{
     decode_client_envelope, encode_server_message, handshake_response, ActionDto, AssignmentDto,
@@ -6,6 +6,17 @@ use keyro_core_protocol::{
     ServerMessage,
 };
 use serde_json::Value;
+
+pub struct ProtocolSession {
+    core_version: String,
+    state: SessionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionState {
+    AwaitingHandshake,
+    Established,
+}
 
 pub enum ProtocolDispatch {
     Immediate(ServerMessage),
@@ -15,7 +26,74 @@ pub enum ProtocolDispatch {
     },
 }
 
-pub fn decode_protocol_dispatch(line: &str, core_version: &str) -> ProtocolDispatch {
+impl ProtocolSession {
+    pub fn new(core_version: impl Into<String>) -> Self {
+        Self {
+            core_version: core_version.into(),
+            state: SessionState::AwaitingHandshake,
+        }
+    }
+
+    pub fn receive_line(&mut self, line: &str) -> ProtocolDispatch {
+        match decode_client_envelope(line) {
+            Ok(envelope) => self.dispatch_envelope(envelope),
+            Err(error) => {
+                let request_id = extract_request_id(line);
+                ProtocolDispatch::Immediate(protocol_error_message(request_id, &error))
+            }
+        }
+    }
+
+    fn dispatch_envelope(
+        &mut self,
+        envelope: keyro_core_protocol::ClientEnvelope,
+    ) -> ProtocolDispatch {
+        match envelope.message {
+            ClientMessage::Handshake(_) if self.state == SessionState::Established => {
+                ProtocolDispatch::Immediate(ServerMessage::Error {
+                    request_id: Some(envelope.request_id),
+                    error: ErrorDto {
+                        code: ErrorCode::ValidationFailed,
+                        message: "handshake already completed for this connection".to_owned(),
+                    },
+                })
+            }
+            ClientMessage::Handshake(message) => {
+                let response = handshake_response(
+                    envelope.request_id,
+                    message.protocol,
+                    self.core_version.clone(),
+                );
+                if matches!(response, ServerMessage::HandshakeAccepted { .. }) {
+                    self.state = SessionState::Established;
+                }
+                ProtocolDispatch::Immediate(response)
+            }
+            message if self.state == SessionState::Established => {
+                match command_from_message(message) {
+                    Ok(command) => ProtocolDispatch::Command {
+                        request_id: envelope.request_id,
+                        command,
+                    },
+                    Err(error) => ProtocolDispatch::Immediate(ipc_error_message(
+                        Some(envelope.request_id),
+                        &error,
+                    )),
+                }
+            }
+            _ => ProtocolDispatch::Immediate(ServerMessage::Error {
+                request_id: Some(envelope.request_id),
+                error: ErrorDto {
+                    code: ErrorCode::ValidationFailed,
+                    message: "handshake required before command routing".to_owned(),
+                },
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+fn decode_protocol_dispatch(line: &str, core_version: &str) -> ProtocolDispatch {
     match decode_client_envelope(line) {
         Ok(envelope) => match envelope.message {
             ClientMessage::Handshake(message) => ProtocolDispatch::Immediate(handshake_response(
@@ -41,7 +119,8 @@ pub fn decode_protocol_dispatch(line: &str, core_version: &str) -> ProtocolDispa
     }
 }
 
-pub fn decode_protocol_command(line: &str) -> Result<(String, CoreCommand), IpcError> {
+#[cfg(test)]
+fn decode_protocol_command(line: &str) -> Result<(String, CoreCommand), IpcError> {
     let envelope = decode_client_envelope(line).map_err(IpcError::Protocol)?;
     Ok((envelope.request_id, command_from_message(envelope.message)?))
 }
@@ -64,16 +143,6 @@ pub fn response_from_core(request_id: String, response: CoreResponse) -> ServerM
                 .collect(),
         },
         CoreResponse::Acknowledged => ServerMessage::Acknowledged { request_id },
-    }
-}
-
-pub fn error_message(request_id: Option<String>, error: impl std::fmt::Display) -> ServerMessage {
-    ServerMessage::Error {
-        request_id,
-        error: ErrorDto {
-            code: ErrorCode::ValidationFailed,
-            message: error.to_string(),
-        },
     }
 }
 
@@ -109,6 +178,26 @@ fn ipc_error_message(request_id: Option<String>, error: &IpcError) -> ServerMess
         error: ErrorDto {
             code,
             message: error.to_string(),
+        },
+    }
+}
+
+pub fn error_message(request_id: Option<String>, error: &AppError) -> ServerMessage {
+    let (code, message) = match error {
+        AppError::Domain(_)
+        | AppError::ActiveProfileMissing
+        | AppError::AssignmentNotFound
+        | AppError::AssignmentHasNoAction => (ErrorCode::ValidationFailed, "validation failed"),
+        AppError::OpenUrl(_) | AppError::Storage(_) | AppError::EventSink(_) => {
+            (ErrorCode::Internal, "command failed")
+        }
+    };
+
+    ServerMessage::Error {
+        request_id,
+        error: ErrorDto {
+            code,
+            message: message.to_owned(),
         },
     }
 }
@@ -271,5 +360,141 @@ mod tests {
 
         assert_eq!(request_id, Some("req-large-index".to_owned()));
         assert_eq!(error.code, ErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn session_accepts_handshake_before_commands() {
+        let mut session = ProtocolSession::new("0.1.0");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.1.0/handshake.json");
+
+        let ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted {
+            request_id,
+            core_version,
+            ..
+        }) = session.receive_line(handshake)
+        else {
+            panic!("expected handshake acceptance");
+        };
+        assert_eq!(request_id, "req-handshake");
+        assert_eq!(core_version, "0.1.0");
+
+        let command =
+            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+        let ProtocolDispatch::Command {
+            request_id,
+            command,
+        } = session.receive_line(command)
+        else {
+            panic!("expected routed command after handshake");
+        };
+
+        assert_eq!(request_id, "req-virtual-key-press");
+        assert!(matches!(command, CoreCommand::VirtualControlInput { .. }));
+    }
+
+    #[test]
+    fn session_rejects_commands_before_handshake() {
+        let mut session = ProtocolSession::new("0.1.0");
+        let command =
+            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+
+        let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
+            session.receive_line(command)
+        else {
+            panic!("expected immediate handshake-required error");
+        };
+
+        assert_eq!(request_id, Some("req-virtual-key-press".to_owned()));
+        assert_eq!(error.code, ErrorCode::ValidationFailed);
+        assert!(error.message.contains("handshake required"));
+    }
+
+    #[test]
+    fn incompatible_handshake_does_not_open_session() {
+        let mut session = ProtocolSession::new("0.1.0");
+        let handshake = r#"{
+            "request_id": "req-handshake",
+            "message": {
+                "type": "handshake",
+                "component": "studio",
+                "component_version": "0.1.0",
+                "protocol": {
+                    "major": 0,
+                    "minor": 2
+                }
+            }
+        }"#;
+
+        let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
+            session.receive_line(handshake)
+        else {
+            panic!("expected incompatible protocol error");
+        };
+        assert_eq!(request_id, Some("req-handshake".to_owned()));
+        assert_eq!(error.code, ErrorCode::IncompatibleProtocol);
+
+        let command =
+            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+        let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
+            session.receive_line(command)
+        else {
+            panic!("expected command rejection after failed handshake");
+        };
+
+        assert_eq!(request_id, Some("req-virtual-key-press".to_owned()));
+        assert_eq!(error.code, ErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn duplicate_handshake_is_rejected_without_closing_session() {
+        let mut session = ProtocolSession::new("0.1.0");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.1.0/handshake.json");
+        assert!(matches!(
+            session.receive_line(handshake),
+            ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted { .. })
+        ));
+
+        let incompatible_handshake = r#"{
+            "request_id": "req-renegotiate",
+            "message": {
+                "type": "handshake",
+                "component": "studio",
+                "component_version": "0.1.0",
+                "protocol": {
+                    "major": 0,
+                    "minor": 2
+                }
+            }
+        }"#;
+        let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
+            session.receive_line(incompatible_handshake)
+        else {
+            panic!("expected duplicate handshake rejection");
+        };
+        assert_eq!(request_id, Some("req-renegotiate".to_owned()));
+        assert_eq!(error.code, ErrorCode::ValidationFailed);
+        assert!(error.message.contains("already completed"));
+
+        let command =
+            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+        assert!(matches!(
+            session.receive_line(command),
+            ProtocolDispatch::Command { .. }
+        ));
+    }
+
+    #[test]
+    fn maps_application_failures_to_sanitized_protocol_errors() {
+        let message = error_message(
+            Some("req-storage".to_owned()),
+            &AppError::Storage("database path /secret/keyro.sqlite failed".to_owned()),
+        );
+
+        let ServerMessage::Error { request_id, error } = message else {
+            panic!("expected error message");
+        };
+        assert_eq!(request_id, Some("req-storage".to_owned()));
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(error.message, "command failed");
     }
 }
