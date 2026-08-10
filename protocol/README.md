@@ -10,9 +10,16 @@ artifacts without copying Core internals.
 ```text
 protocol/
 ├── schemas/v0.1.0/core-studio.schema.json
+├── schemas/v0.2.0/core-studio.schema.json
 ├── test-vectors/v0.1.0/
-└── generated/typescript/v0.1.0/core-studio.ts
+├── test-vectors/v0.2.0/
+├── generated/typescript/v0.1.0/core-studio.ts
+└── generated/typescript/v0.2.0/core-studio.ts
 ```
+
+The current Core/Studio protocol is `v0.2.0`. It adds `get_snapshot` so
+clients can hydrate Core-owned MVP layout, profile state, and persisted
+assignments after reconnect or restart.
 
 ## Rules
 

@@ -317,7 +317,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.1.0/handshake.json"
+                "../../../protocol/test-vectors/v0.2.0/handshake.json"
             ))
         )
         .unwrap();
@@ -325,7 +325,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.1.0/virtual-control-input.json"
+                "../../../protocol/test-vectors/v0.2.0/virtual-control-input.json"
             ))
         )
         .unwrap();
@@ -366,6 +366,75 @@ mod tests {
     }
 
     #[test]
+    fn dev_connection_returns_snapshot_with_persisted_assignment() {
+        let repository = SqliteProfileRepository::in_memory().unwrap();
+        let profile = repository.ensure_default_profile().unwrap();
+        let control = ControlId::key(0, 0).unwrap();
+        repository
+            .save_assignment(
+                &Assignment::single(
+                    profile.id,
+                    control,
+                    Action::OpenUrl {
+                        url: SafeUrl::parse("https://example.com").unwrap(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let handler = thread::spawn(move || {
+            handle_dev_connection_inner(server, repository, RecordingOpener::default())
+        });
+
+        writeln!(
+            client,
+            "{}",
+            compact_json(include_str!(
+                "../../../protocol/test-vectors/v0.2.0/handshake.json"
+            ))
+        )
+        .unwrap();
+        writeln!(
+            client,
+            "{}",
+            compact_json(include_str!(
+                "../../../protocol/test-vectors/v0.2.0/get-snapshot.json"
+            ))
+        )
+        .unwrap();
+        client.shutdown(Shutdown::Write).unwrap();
+
+        let mut reader = BufReader::new(client);
+        let handshake = read_server_message(&mut reader);
+        let snapshot = read_server_message(&mut reader);
+
+        assert!(matches!(handshake, ServerMessage::HandshakeAccepted { .. }));
+        let ServerMessage::Snapshot {
+            request_id,
+            layout,
+            profiles,
+            assignments,
+        } = snapshot
+        else {
+            panic!("expected snapshot response");
+        };
+        assert_eq!(request_id, "req-snapshot");
+        assert_eq!(layout.page_count, 4);
+        assert_eq!(layout.key_rows, 3);
+        assert_eq!(layout.key_columns, 4);
+        assert_eq!(layout.encoder_count, 2);
+        assert_eq!(profiles[0].id, profile.id.to_string());
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].profile_id, profile.id.to_string());
+        assert_eq!(assignments[0].control, ControlDto::Key { page: 0, key: 0 });
+        assert_eq!(assignments[0].actions.len(), 1);
+
+        handler.join().unwrap().unwrap();
+    }
+
+    #[test]
     fn dev_connection_delivers_failed_action_event_before_error() {
         let repository = SqliteProfileRepository::in_memory().unwrap();
         let profile = repository.ensure_default_profile().unwrap();
@@ -390,7 +459,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.1.0/handshake.json"
+                "../../../protocol/test-vectors/v0.2.0/handshake.json"
             ))
         )
         .unwrap();
@@ -398,7 +467,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.1.0/virtual-control-input.json"
+                "../../../protocol/test-vectors/v0.2.0/virtual-control-input.json"
             ))
         )
         .unwrap();

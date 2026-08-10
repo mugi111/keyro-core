@@ -3,6 +3,7 @@ use std::fmt;
 use keyro_core_domain::SafeUrl;
 use keyro_core_domain::{
     ensure_exactly_one_active, Action, Assignment, ControlId, Profile, ProfileId,
+    ENCODERS_PER_PAGE, KEY_COLUMNS, KEY_ROWS, PAGE_COUNT,
 };
 use uuid::Uuid;
 
@@ -11,6 +12,7 @@ pub trait ProfileRepository: Send + Sync {
     fn list_profiles(&self) -> Result<Vec<Profile>, AppError>;
     fn set_active_profile(&self, profile_id: ProfileId) -> Result<(), AppError>;
     fn save_assignment(&self, assignment: &Assignment) -> Result<(), AppError>;
+    fn load_snapshot_state(&self) -> Result<SnapshotState, AppError>;
     fn find_assignment(
         &self,
         profile_id: ProfileId,
@@ -28,6 +30,7 @@ pub trait UrlOpener: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreCommand {
+    GetSnapshot,
     ListProfiles,
     SetActiveProfile { profile_id: ProfileId },
     SaveAssignment { assignment: Assignment },
@@ -36,9 +39,45 @@ pub enum CoreCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreResponse {
+    Snapshot { snapshot: CoreSnapshot },
     Profiles { profiles: Vec<Profile> },
     Acknowledged,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreSnapshot {
+    pub layout: DeviceLayout,
+    pub profiles: Vec<Profile>,
+    pub assignments: Vec<SnapshotAssignment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotAssignment {
+    pub profile_id: ProfileId,
+    pub control: ControlId,
+    pub actions: Vec<Action>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotState {
+    pub profiles: Vec<Profile>,
+    pub assignments: Vec<Assignment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceLayout {
+    pub page_count: u8,
+    pub key_rows: u8,
+    pub key_columns: u8,
+    pub encoder_count: u8,
+}
+
+pub const MVP_DEVICE_LAYOUT: DeviceLayout = DeviceLayout {
+    page_count: PAGE_COUNT,
+    key_rows: KEY_ROWS,
+    key_columns: KEY_COLUMNS,
+    encoder_count: ENCODERS_PER_PAGE,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionRunId(Uuid);
@@ -112,6 +151,26 @@ where
 
     pub fn handle_command(&self, command: CoreCommand) -> Result<CoreResponse, AppError> {
         match command {
+            CoreCommand::GetSnapshot => {
+                let state = self.repository.load_snapshot_state()?;
+                ensure_exactly_one_active(&state.profiles).map_err(AppError::Domain)?;
+                let assignments = state
+                    .assignments
+                    .into_iter()
+                    .map(|assignment| SnapshotAssignment {
+                        profile_id: assignment.profile_id,
+                        control: assignment.control,
+                        actions: assignment.actions,
+                    })
+                    .collect();
+                Ok(CoreResponse::Snapshot {
+                    snapshot: CoreSnapshot {
+                        layout: MVP_DEVICE_LAYOUT,
+                        profiles: state.profiles,
+                        assignments,
+                    },
+                })
+            }
             CoreCommand::ListProfiles => {
                 let profiles = self.repository.list_profiles()?;
                 ensure_exactly_one_active(&profiles).map_err(AppError::Domain)?;
@@ -258,8 +317,20 @@ mod tests {
         }
 
         fn save_assignment(&self, assignment: &Assignment) -> Result<(), AppError> {
-            self.assignments.lock().unwrap().push(assignment.clone());
+            let mut assignments = self.assignments.lock().unwrap();
+            assignments.retain(|candidate| {
+                !(candidate.profile_id == assignment.profile_id
+                    && candidate.control == assignment.control)
+            });
+            assignments.push(assignment.clone());
             Ok(())
+        }
+
+        fn load_snapshot_state(&self) -> Result<SnapshotState, AppError> {
+            Ok(SnapshotState {
+                profiles: self.profiles.lock().unwrap().clone(),
+                assignments: self.assignments.lock().unwrap().clone(),
+            })
         }
 
         fn find_assignment(
@@ -345,6 +416,44 @@ mod tests {
             panic!("expected succeeded event");
         };
         assert_eq!(succeeded_run_id, run_id);
+    }
+
+    #[test]
+    fn snapshot_returns_layout_profiles_and_effective_assignments() {
+        let repository = MemoryRepository::new();
+        let profile = repository.ensure_default_profile().unwrap();
+        let control = ControlId::key(0, 0).unwrap();
+        repository
+            .save_assignment(&Assignment {
+                profile_id: profile.id,
+                control,
+                actions: vec![
+                    Action::OpenUrl {
+                        url: SafeUrl::parse("https://example.com").unwrap(),
+                    },
+                    Action::OpenUrl {
+                        url: SafeUrl::parse("https://example.com/second").unwrap(),
+                    },
+                ],
+            })
+            .unwrap();
+        let service = CoreService::new(
+            repository,
+            RecordingOpener::default(),
+            RecordingEvents::default(),
+        );
+
+        let CoreResponse::Snapshot { snapshot } =
+            service.handle_command(CoreCommand::GetSnapshot).unwrap()
+        else {
+            panic!("expected snapshot response");
+        };
+
+        assert_eq!(snapshot.layout, MVP_DEVICE_LAYOUT);
+        assert_eq!(snapshot.profiles, vec![profile]);
+        assert_eq!(snapshot.assignments.len(), 1);
+        assert_eq!(snapshot.assignments[0].control, control);
+        assert_eq!(snapshot.assignments[0].actions.len(), 2);
     }
 
     #[test]

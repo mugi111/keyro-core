@@ -1,9 +1,11 @@
-use keyro_core_app::{ActionFailure, AppError, CoreCommand, CoreEvent, CoreResponse};
+use keyro_core_app::{
+    ActionFailure, AppError, CoreCommand, CoreEvent, CoreResponse, DeviceLayout, SnapshotAssignment,
+};
 use keyro_core_domain::{Action, Assignment, ControlId, EncoderOperation, ProfileId, SafeUrl};
 use keyro_core_protocol::{
     decode_client_envelope, encode_server_message, handshake_response, ActionDto, ActionEventDto,
-    ActionFailureCode, AssignmentDto, ClientMessage, ControlDto, EncoderOperationDto, ErrorCode,
-    ErrorDto, ProtocolError, ServerMessage,
+    ActionFailureCode, AssignmentDto, ClientMessage, ControlDto, DeviceLayoutDto,
+    EncoderOperationDto, ErrorCode, ErrorDto, ProtocolError, ServerMessage, SnapshotAssignmentDto,
 };
 use serde_json::Value;
 
@@ -131,16 +133,19 @@ pub fn encode_protocol_message(message: &ServerMessage) -> Result<String, IpcErr
 
 pub fn response_from_core(request_id: String, response: CoreResponse) -> ServerMessage {
     match response {
+        CoreResponse::Snapshot { snapshot } => ServerMessage::Snapshot {
+            request_id,
+            layout: layout_to_dto(snapshot.layout),
+            profiles: snapshot.profiles.into_iter().map(profile_to_dto).collect(),
+            assignments: snapshot
+                .assignments
+                .into_iter()
+                .map(snapshot_assignment_to_dto)
+                .collect(),
+        },
         CoreResponse::Profiles { profiles } => ServerMessage::Profiles {
             request_id,
-            profiles: profiles
-                .into_iter()
-                .map(|profile| keyro_core_protocol::ProfileDto {
-                    id: profile.id.to_string(),
-                    name: profile.name,
-                    is_active: profile.is_active,
-                })
-                .collect(),
+            profiles: profiles.into_iter().map(profile_to_dto).collect(),
         },
         CoreResponse::Acknowledged => ServerMessage::Acknowledged { request_id },
     }
@@ -245,6 +250,7 @@ fn extract_request_id(line: &str) -> Option<String> {
 fn command_from_message(message: ClientMessage) -> Result<CoreCommand, IpcError> {
     match message {
         ClientMessage::Handshake(_) => Err(IpcError::HandshakeRequiresSession),
+        ClientMessage::GetSnapshot(_) => Ok(CoreCommand::GetSnapshot),
         ClientMessage::ListProfiles(_) => Ok(CoreCommand::ListProfiles),
         ClientMessage::SetActiveProfile(message) => Ok(CoreCommand::SetActiveProfile {
             profile_id: ProfileId::parse(&message.profile_id)?,
@@ -255,6 +261,14 @@ fn command_from_message(message: ClientMessage) -> Result<CoreCommand, IpcError>
         ClientMessage::VirtualControlInput(message) => Ok(CoreCommand::VirtualControlInput {
             control: control_from_dto(message.control)?,
         }),
+    }
+}
+
+fn profile_to_dto(profile: keyro_core_domain::Profile) -> keyro_core_protocol::ProfileDto {
+    keyro_core_protocol::ProfileDto {
+        id: profile.id.to_string(),
+        name: profile.name,
+        is_active: profile.is_active,
     }
 }
 
@@ -272,6 +286,31 @@ fn action_from_dto(action: ActionDto) -> Result<Action, IpcError> {
         ActionDto::OpenUrl { url } => Ok(Action::OpenUrl {
             url: SafeUrl::parse(url)?,
         }),
+    }
+}
+
+fn action_to_dto(action: Action) -> ActionDto {
+    match action {
+        Action::OpenUrl { url } => ActionDto::OpenUrl {
+            url: url.as_str().to_owned(),
+        },
+    }
+}
+
+fn layout_to_dto(layout: DeviceLayout) -> DeviceLayoutDto {
+    DeviceLayoutDto {
+        page_count: layout.page_count as u16,
+        key_rows: layout.key_rows as u16,
+        key_columns: layout.key_columns as u16,
+        encoder_count: layout.encoder_count as u16,
+    }
+}
+
+fn snapshot_assignment_to_dto(assignment: SnapshotAssignment) -> SnapshotAssignmentDto {
+    SnapshotAssignmentDto {
+        profile_id: assignment.profile_id.to_string(),
+        control: control_to_dto(assignment.control),
+        actions: assignment.actions.into_iter().map(action_to_dto).collect(),
     }
 }
 
@@ -352,10 +391,11 @@ pub enum IpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use keyro_core_app::{CoreSnapshot, MVP_DEVICE_LAYOUT};
 
     #[test]
     fn decodes_protocol_virtual_control_command() {
-        let line = include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+        let line = include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
 
         let (request_id, command) = decode_protocol_command(line).unwrap();
 
@@ -371,12 +411,67 @@ mod tests {
     #[test]
     fn decodes_protocol_assignment_command() {
         let line =
-            include_str!("../../../protocol/test-vectors/v0.1.0/save-assignment-open-url.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/save-assignment-open-url.json");
 
         let (request_id, command) = decode_protocol_command(line).unwrap();
 
         assert_eq!(request_id, "req-save-assignment");
         assert!(matches!(command, CoreCommand::SaveAssignment { .. }));
+    }
+
+    #[test]
+    fn decodes_protocol_snapshot_command() {
+        let line = include_str!("../../../protocol/test-vectors/v0.2.0/get-snapshot.json");
+
+        let (request_id, command) = decode_protocol_command(line).unwrap();
+
+        assert_eq!(request_id, "req-snapshot");
+        assert_eq!(command, CoreCommand::GetSnapshot);
+    }
+
+    #[test]
+    fn encodes_snapshot_response_with_layout_and_assignments() {
+        let profile = keyro_core_domain::Profile {
+            id: ProfileId::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            name: "Default".to_owned(),
+            is_active: true,
+        };
+        let response = response_from_core(
+            "req-snapshot".to_owned(),
+            CoreResponse::Snapshot {
+                snapshot: CoreSnapshot {
+                    layout: MVP_DEVICE_LAYOUT,
+                    profiles: vec![profile.clone()],
+                    assignments: vec![SnapshotAssignment {
+                        profile_id: profile.id,
+                        control: ControlId::key(0, 0).unwrap(),
+                        actions: vec![Action::OpenUrl {
+                            url: SafeUrl::parse("https://example.com").unwrap(),
+                        }],
+                    }],
+                },
+            },
+        );
+
+        let ServerMessage::Snapshot {
+            request_id,
+            layout,
+            profiles,
+            assignments,
+        } = response
+        else {
+            panic!("expected snapshot response");
+        };
+
+        assert_eq!(request_id, "req-snapshot");
+        assert_eq!(layout.page_count, 4);
+        assert_eq!(layout.key_rows, 3);
+        assert_eq!(layout.key_columns, 4);
+        assert_eq!(layout.encoder_count, 2);
+        assert_eq!(profiles[0].id, profile.id.to_string());
+        assert_eq!(assignments[0].profile_id, profile.id.to_string());
+        assert_eq!(assignments[0].control, ControlDto::Key { page: 0, key: 0 });
+        assert_eq!(assignments[0].actions.len(), 1);
     }
 
     #[test]
@@ -389,7 +484,7 @@ mod tests {
         }"#;
 
         let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
-            decode_protocol_dispatch(line, "0.1.0")
+            decode_protocol_dispatch(line, "core-test")
         else {
             panic!("expected immediate protocol error");
         };
@@ -413,7 +508,7 @@ mod tests {
         }"#;
 
         let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
-            decode_protocol_dispatch(line, "0.1.0")
+            decode_protocol_dispatch(line, "core-test")
         else {
             panic!("expected immediate validation error");
         };
@@ -424,8 +519,8 @@ mod tests {
 
     #[test]
     fn session_accepts_handshake_before_commands() {
-        let mut session = ProtocolSession::new("0.1.0");
-        let handshake = include_str!("../../../protocol/test-vectors/v0.1.0/handshake.json");
+        let mut session = ProtocolSession::new("core-test");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
 
         let ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted {
             request_id,
@@ -436,10 +531,10 @@ mod tests {
             panic!("expected handshake acceptance");
         };
         assert_eq!(request_id, "req-handshake");
-        assert_eq!(core_version, "0.1.0");
+        assert_eq!(core_version, "core-test");
 
         let command =
-            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
         let ProtocolDispatch::Command {
             request_id,
             command,
@@ -454,9 +549,9 @@ mod tests {
 
     #[test]
     fn session_rejects_commands_before_handshake() {
-        let mut session = ProtocolSession::new("0.1.0");
+        let mut session = ProtocolSession::new("core-test");
         let command =
-            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
 
         let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
             session.receive_line(command)
@@ -471,16 +566,16 @@ mod tests {
 
     #[test]
     fn incompatible_handshake_does_not_open_session() {
-        let mut session = ProtocolSession::new("0.1.0");
+        let mut session = ProtocolSession::new("core-test");
         let handshake = r#"{
             "request_id": "req-handshake",
             "message": {
                 "type": "handshake",
                 "component": "studio",
-                "component_version": "0.1.0",
+                "component_version": "0.2.0",
                 "protocol": {
                     "major": 0,
-                    "minor": 2
+                    "minor": 3
                 }
             }
         }"#;
@@ -494,7 +589,7 @@ mod tests {
         assert_eq!(error.code, ErrorCode::IncompatibleProtocol);
 
         let command =
-            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
         let ProtocolDispatch::Immediate(ServerMessage::Error { request_id, error }) =
             session.receive_line(command)
         else {
@@ -507,8 +602,8 @@ mod tests {
 
     #[test]
     fn duplicate_handshake_is_rejected_without_closing_session() {
-        let mut session = ProtocolSession::new("0.1.0");
-        let handshake = include_str!("../../../protocol/test-vectors/v0.1.0/handshake.json");
+        let mut session = ProtocolSession::new("core-test");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
         assert!(matches!(
             session.receive_line(handshake),
             ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted { .. })
@@ -519,10 +614,10 @@ mod tests {
             "message": {
                 "type": "handshake",
                 "component": "studio",
-                "component_version": "0.1.0",
+                "component_version": "0.2.0",
                 "protocol": {
                     "major": 0,
-                    "minor": 2
+                    "minor": 3
                 }
             }
         }"#;
@@ -536,7 +631,7 @@ mod tests {
         assert!(error.message.contains("already completed"));
 
         let command =
-            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
         assert!(matches!(
             session.receive_line(command),
             ProtocolDispatch::Command { .. }

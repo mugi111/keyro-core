@@ -3,7 +3,9 @@ use url::Url;
 use uuid::Uuid;
 
 pub const PAGE_COUNT: u8 = 4;
-pub const KEYS_PER_PAGE: u8 = 12;
+pub const KEY_ROWS: u8 = 3;
+pub const KEY_COLUMNS: u8 = 4;
+pub const KEYS_PER_PAGE: u8 = KEY_ROWS * KEY_COLUMNS;
 pub const ENCODERS_PER_PAGE: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

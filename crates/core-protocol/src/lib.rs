@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.1.0";
+pub const PROTOCOL_VERSION: &str = "0.2.0";
 pub const PROTOCOL_MAJOR: u16 = 0;
-pub const PROTOCOL_MINOR: u16 = 1;
+pub const PROTOCOL_MINOR: u16 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +16,7 @@ pub struct ClientEnvelope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     Handshake(HandshakeMessage),
+    GetSnapshot(GetSnapshotMessage),
     ListProfiles(ListProfilesMessage),
     SetActiveProfile(SetActiveProfileMessage),
     SaveAssignment(SaveAssignmentMessage),
@@ -29,6 +30,10 @@ pub struct HandshakeMessage {
     pub component_version: String,
     pub protocol: ProtocolVersion,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetSnapshotMessage {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,6 +133,12 @@ pub enum ServerMessage {
         request_id: String,
         profiles: Vec<ProfileDto>,
     },
+    Snapshot {
+        request_id: String,
+        layout: DeviceLayoutDto,
+        profiles: Vec<ProfileDto>,
+        assignments: Vec<SnapshotAssignmentDto>,
+    },
     Acknowledged {
         request_id: String,
     },
@@ -146,6 +157,23 @@ pub struct ProfileDto {
     pub id: String,
     pub name: String,
     pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceLayoutDto {
+    pub page_count: u16,
+    pub key_rows: u16,
+    pub key_columns: u16,
+    pub encoder_count: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotAssignmentDto {
+    pub profile_id: String,
+    pub control: ControlDto,
+    pub actions: Vec<ActionDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,7 +271,7 @@ mod tests {
     #[test]
     fn decodes_virtual_control_test_vector() {
         let input =
-            include_str!("../../../protocol/test-vectors/v0.1.0/virtual-control-input.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/virtual-control-input.json");
 
         let envelope = decode_client_envelope(input).unwrap();
 
@@ -259,7 +287,7 @@ mod tests {
     #[test]
     fn decodes_save_assignment_test_vector() {
         let input =
-            include_str!("../../../protocol/test-vectors/v0.1.0/save-assignment-open-url.json");
+            include_str!("../../../protocol/test-vectors/v0.2.0/save-assignment-open-url.json");
 
         let envelope = decode_client_envelope(input).unwrap();
 
@@ -269,7 +297,7 @@ mod tests {
 
     #[test]
     fn decodes_handshake_test_vector() {
-        let input = include_str!("../../../protocol/test-vectors/v0.1.0/handshake.json");
+        let input = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
 
         let envelope = decode_client_envelope(input).unwrap();
 
@@ -278,10 +306,47 @@ mod tests {
             envelope.message,
             ClientMessage::Handshake(HandshakeMessage {
                 component: ClientComponent::Studio,
-                component_version: "0.1.0".to_owned(),
+                component_version: "0.2.0".to_owned(),
                 protocol: ProtocolVersion::current(),
             })
         );
+    }
+
+    #[test]
+    fn decodes_get_snapshot_test_vector() {
+        let input = include_str!("../../../protocol/test-vectors/v0.2.0/get-snapshot.json");
+
+        let envelope = decode_client_envelope(input).unwrap();
+
+        assert_eq!(envelope.request_id, "req-snapshot");
+        assert_eq!(
+            envelope.message,
+            ClientMessage::GetSnapshot(GetSnapshotMessage {})
+        );
+    }
+
+    #[test]
+    fn decodes_snapshot_response_test_vector() {
+        let input = include_str!("../../../protocol/test-vectors/v0.2.0/snapshot-response.json");
+
+        let message: ServerMessage = serde_json::from_str(input).unwrap();
+
+        let ServerMessage::Snapshot {
+            request_id,
+            layout,
+            profiles,
+            assignments,
+        } = message
+        else {
+            panic!("expected snapshot response");
+        };
+        assert_eq!(request_id, "req-snapshot");
+        assert_eq!(layout.page_count, 4);
+        assert_eq!(layout.key_rows, 3);
+        assert_eq!(layout.key_columns, 4);
+        assert_eq!(layout.encoder_count, 2);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(assignments.len(), 1);
     }
 
     #[test]
@@ -329,9 +394,9 @@ mod tests {
 
     #[test]
     fn protocol_v0_requires_exact_version_match() {
-        assert!(ProtocolVersion { major: 0, minor: 1 }
-            .is_exactly(ProtocolVersion { major: 0, minor: 1 }));
-        assert!(!ProtocolVersion { major: 0, minor: 1 }
+        assert!(ProtocolVersion { major: 0, minor: 2 }
             .is_exactly(ProtocolVersion { major: 0, minor: 2 }));
+        assert!(!ProtocolVersion { major: 0, minor: 2 }
+            .is_exactly(ProtocolVersion { major: 0, minor: 3 }));
     }
 }

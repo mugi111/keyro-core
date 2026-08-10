@@ -1,0 +1,12 @@
+{
+  "request_id": "req-handshake",
+  "message": {
+    "type": "handshake",
+    "component": "studio",
+    "component_version": "0.2.0",
+    "protocol": {
+      "major": 0,
+      "minor": 2
+    }
+  }
+}

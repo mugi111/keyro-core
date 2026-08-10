@@ -1,0 +1,33 @@
+{
+  "type": "snapshot",
+  "request_id": "req-snapshot",
+  "layout": {
+    "page_count": 4,
+    "key_rows": 3,
+    "key_columns": 4,
+    "encoder_count": 2
+  },
+  "profiles": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Default",
+      "is_active": true
+    }
+  ],
+  "assignments": [
+    {
+      "profile_id": "550e8400-e29b-41d4-a716-446655440000",
+      "control": {
+        "kind": "key",
+        "page": 0,
+        "key": 0
+      },
+      "actions": [
+        {
+          "kind": "open_url",
+          "url": "https://example.com"
+        }
+      ]
+    }
+  ]
+}
