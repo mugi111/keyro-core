@@ -21,6 +21,8 @@ virtual control input, and route `open_url` actions.
   future ordered multi-action support.
 - Safe `open_url` execution for `http` and `https` URLs only.
 - Structured action events: `running`, `succeeded`, and `failed`.
+- Authoritative snapshot readback for MVP layout, profiles, and persisted
+  assignments.
 
 ## Protocol Status
 
@@ -33,9 +35,9 @@ The IPC crate maps protocol DTOs into Core application commands. Keep protocol
 DTOs separate from Core domain/application models so schema evolution does not
 leak into Core internals.
 
-Protocol `0.x` handshakes require an exact version match. Studio should consume
-the checked-in schema, test vectors, and TypeScript artifact from `protocol/`
-instead of copying Core internals.
+Current protocol: `0.2.0`. Protocol `0.x` handshakes require an exact version
+match. Studio should consume the checked-in schema, test vectors, and
+TypeScript artifact from `protocol/` instead of copying Core internals.
 
 ## Development
 
