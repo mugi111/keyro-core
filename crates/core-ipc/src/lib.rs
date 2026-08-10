@@ -1,9 +1,9 @@
-use keyro_core_app::{AppError, CoreCommand, CoreResponse};
+use keyro_core_app::{ActionFailure, AppError, CoreCommand, CoreEvent, CoreResponse};
 use keyro_core_domain::{Action, Assignment, ControlId, EncoderOperation, ProfileId, SafeUrl};
 use keyro_core_protocol::{
-    decode_client_envelope, encode_server_message, handshake_response, ActionDto, AssignmentDto,
-    ClientMessage, ControlDto, EncoderOperationDto, ErrorCode, ErrorDto, ProtocolError,
-    ServerMessage,
+    decode_client_envelope, encode_server_message, handshake_response, ActionDto, ActionEventDto,
+    ActionFailureCode, AssignmentDto, ClientMessage, ControlDto, EncoderOperationDto, ErrorCode,
+    ErrorDto, ProtocolError, ServerMessage,
 };
 use serde_json::Value;
 
@@ -146,6 +146,34 @@ pub fn response_from_core(request_id: String, response: CoreResponse) -> ServerM
     }
 }
 
+pub fn event_from_core(event: CoreEvent) -> ServerMessage {
+    let event = match event {
+        CoreEvent::ActionRunning {
+            run_id,
+            profile_id,
+            control,
+        } => ActionEventDto::Running {
+            execution_id: run_id.to_string(),
+            profile_id: profile_id.to_string(),
+            control: control_to_dto(control),
+        },
+        CoreEvent::ActionSucceeded { run_id } => ActionEventDto::Succeeded {
+            execution_id: run_id.to_string(),
+        },
+        CoreEvent::ActionFailed {
+            run_id,
+            failure,
+            message,
+        } => ActionEventDto::Failed {
+            execution_id: run_id.to_string(),
+            code: action_failure_to_dto(failure),
+            message,
+        },
+    };
+
+    ServerMessage::ActionEvent { event }
+}
+
 fn protocol_error_message(request_id: Option<String>, error: &ProtocolError) -> ServerMessage {
     let code = match error {
         ProtocolError::Decode(_) => ErrorCode::UnknownMessage,
@@ -274,6 +302,38 @@ fn encoder_operation_from_dto(operation: EncoderOperationDto) -> EncoderOperatio
         EncoderOperationDto::Left => EncoderOperation::Left,
         EncoderOperationDto::Right => EncoderOperation::Right,
         EncoderOperationDto::Press => EncoderOperation::Press,
+    }
+}
+
+fn control_to_dto(control: ControlId) -> ControlDto {
+    match control {
+        ControlId::Key { page, key } => ControlDto::Key {
+            page: page.get() as u16,
+            key: key.get() as u16,
+        },
+        ControlId::Encoder {
+            page,
+            encoder,
+            operation,
+        } => ControlDto::Encoder {
+            page: page.get() as u16,
+            encoder: encoder.get() as u16,
+            operation: encoder_operation_to_dto(operation),
+        },
+    }
+}
+
+fn encoder_operation_to_dto(operation: EncoderOperation) -> EncoderOperationDto {
+    match operation {
+        EncoderOperation::Left => EncoderOperationDto::Left,
+        EncoderOperation::Right => EncoderOperationDto::Right,
+        EncoderOperation::Press => EncoderOperationDto::Press,
+    }
+}
+
+fn action_failure_to_dto(failure: ActionFailure) -> ActionFailureCode {
+    match failure {
+        ActionFailure::OpenUrlFailed => ActionFailureCode::OpenUrlFailed,
     }
 }
 
@@ -496,5 +556,52 @@ mod tests {
         assert_eq!(request_id, Some("req-storage".to_owned()));
         assert_eq!(error.code, ErrorCode::Internal);
         assert_eq!(error.message, "command failed");
+    }
+
+    #[test]
+    fn maps_core_action_events_to_protocol_events() {
+        let control = ControlId::encoder(1, 0, EncoderOperation::Press).unwrap();
+        let profile_id = ProfileId::new();
+
+        let ServerMessage::ActionEvent {
+            event:
+                ActionEventDto::Running {
+                    execution_id,
+                    profile_id: encoded_profile_id,
+                    control: encoded_control,
+                },
+        } = event_from_core(CoreEvent::ActionRunning {
+            run_id: Default::default(),
+            profile_id,
+            control,
+        })
+        else {
+            panic!("expected running action event");
+        };
+
+        assert!(!execution_id.is_empty());
+        assert_eq!(encoded_profile_id, profile_id.to_string());
+        assert_eq!(
+            encoded_control,
+            ControlDto::Encoder {
+                page: 1,
+                encoder: 0,
+                operation: EncoderOperationDto::Press
+            }
+        );
+
+        let ServerMessage::ActionEvent {
+            event: ActionEventDto::Failed { code, message, .. },
+        } = event_from_core(CoreEvent::ActionFailed {
+            run_id: Default::default(),
+            failure: ActionFailure::OpenUrlFailed,
+            message: "open failed".to_owned(),
+        })
+        else {
+            panic!("expected failed action event");
+        };
+
+        assert_eq!(code, ActionFailureCode::OpenUrlFailed);
+        assert_eq!(message, "open failed");
     }
 }

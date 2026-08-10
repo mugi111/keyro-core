@@ -1,3 +1,5 @@
+use std::fmt;
+
 use keyro_core_domain::SafeUrl;
 use keyro_core_domain::{
     ensure_exactly_one_active, Action, Assignment, ControlId, Profile, ProfileId,
@@ -53,6 +55,12 @@ impl Default for ActionRunId {
     }
 }
 
+impl fmt::Display for ActionRunId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreEvent {
     ActionRunning {
@@ -65,8 +73,14 @@ pub enum CoreEvent {
     },
     ActionFailed {
         run_id: ActionRunId,
+        failure: ActionFailure,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionFailure {
+    OpenUrlFailed,
 }
 
 pub struct CoreService<R, O, E> {
@@ -146,8 +160,11 @@ where
             }
             Err(error) => {
                 let message = error.to_string();
-                self.event_sink
-                    .emit(CoreEvent::ActionFailed { run_id, message })?;
+                self.event_sink.emit(CoreEvent::ActionFailed {
+                    run_id,
+                    failure: ActionFailure::OpenUrlFailed,
+                    message,
+                })?;
                 Err(error)
             }
         }
@@ -262,21 +279,26 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct RecordingOpener {
-        opened: Mutex<Vec<String>>,
+        opened: Arc<Mutex<Vec<String>>>,
+        error: Arc<Mutex<Option<String>>>,
     }
 
     impl UrlOpener for RecordingOpener {
         fn open_url(&self, url: &SafeUrl) -> Result<(), OpenUrlError> {
             self.opened.lock().unwrap().push(url.as_str().to_owned());
-            Ok(())
+            if let Some(message) = self.error.lock().unwrap().clone() {
+                Err(OpenUrlError::new(message))
+            } else {
+                Ok(())
+            }
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct RecordingEvents {
-        events: Mutex<Vec<CoreEvent>>,
+        events: Arc<Mutex<Vec<CoreEvent>>>,
     }
 
     impl EventSink for RecordingEvents {
@@ -303,8 +325,68 @@ mod tests {
 
         let opener = RecordingOpener::default();
         let events = RecordingEvents::default();
-        let service = CoreService::new(repository, opener, events);
+        let service = CoreService::new(repository, opener.clone(), events.clone());
 
         service.route_virtual_control(control).unwrap();
+
+        assert_eq!(
+            opener.opened.lock().unwrap().as_slice(),
+            ["https://example.com"]
+        );
+        let events = events.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        let CoreEvent::ActionRunning { run_id, .. } = &events[0] else {
+            panic!("expected running event");
+        };
+        let CoreEvent::ActionSucceeded {
+            run_id: succeeded_run_id,
+        } = &events[1]
+        else {
+            panic!("expected succeeded event");
+        };
+        assert_eq!(succeeded_run_id, run_id);
+    }
+
+    #[test]
+    fn virtual_control_emits_failed_event_when_open_url_fails() {
+        let repository = MemoryRepository::new();
+        let profile = repository.ensure_default_profile().unwrap();
+        let control = ControlId::key(0, 0).unwrap();
+        let assignment = Assignment::single(
+            profile.id,
+            control,
+            Action::OpenUrl {
+                url: SafeUrl::parse("https://example.com").unwrap(),
+            },
+        )
+        .unwrap();
+        repository.save_assignment(&assignment).unwrap();
+
+        let opener = RecordingOpener::default();
+        *opener.error.lock().unwrap() = Some("open failed".to_owned());
+        let events = RecordingEvents::default();
+        let service = CoreService::new(repository, opener, events.clone());
+
+        assert!(matches!(
+            service.route_virtual_control(control).unwrap_err(),
+            AppError::OpenUrl(_)
+        ));
+
+        let events = events.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        let CoreEvent::ActionRunning { run_id, .. } = &events[0] else {
+            panic!("expected running event");
+        };
+        let CoreEvent::ActionFailed {
+            run_id: failed_run_id,
+            failure,
+            message,
+        } = &events[1]
+        else {
+            panic!("expected failed event");
+        };
+        assert_eq!(failed_run_id, run_id);
+        assert_eq!(*failure, ActionFailure::OpenUrlFailed);
+        assert_eq!(message, "open failed");
     }
 }
