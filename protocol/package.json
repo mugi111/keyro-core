@@ -1,0 +1,53 @@
+{
+  "name": "@keyro/protocol",
+  "version": "0.2.0",
+  "description": "Versioned Keyro Core, Studio, and Device protocol schemas, TypeScript contracts, and test vectors.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mugi111/keyro-core.git",
+    "directory": "protocol"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "scripts/check-package.mjs",
+    "generated/javascript/v0.2.0/core-studio.js",
+    "generated/typescript/v0.2.0/core-studio.ts",
+    "schemas/v0.2.0/core-studio.schema.json",
+    "test-vectors/v0.2.0/*.json"
+  ],
+  "exports": {
+    "./core-studio/v0.2.0": {
+      "types": "./generated/typescript/v0.2.0/core-studio.ts",
+      "import": "./generated/javascript/v0.2.0/core-studio.js",
+      "default": "./generated/javascript/v0.2.0/core-studio.js"
+    },
+    "./schemas/v0.2.0/core-studio": {
+      "default": "./schemas/v0.2.0/core-studio.schema.json"
+    },
+    "./test-vectors/v0.2.0/get-snapshot": {
+      "default": "./test-vectors/v0.2.0/get-snapshot.json"
+    },
+    "./test-vectors/v0.2.0/handshake": {
+      "default": "./test-vectors/v0.2.0/handshake.json"
+    },
+    "./test-vectors/v0.2.0/save-assignment-open-url": {
+      "default": "./test-vectors/v0.2.0/save-assignment-open-url.json"
+    },
+    "./test-vectors/v0.2.0/snapshot-response": {
+      "default": "./test-vectors/v0.2.0/snapshot-response.json"
+    },
+    "./test-vectors/v0.2.0/virtual-control-input": {
+      "default": "./test-vectors/v0.2.0/virtual-control-input.json"
+    }
+  },
+  "scripts": {
+    "check:package": "node ./scripts/check-package.mjs"
+  }
+}

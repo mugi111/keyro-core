@@ -1,5 +1,10 @@
 export const KEYRO_PROTOCOL_VERSION = "0.2.0" as const;
 
+export const KEYRO_PROTOCOL_HANDSHAKE_VERSION = {
+  major: 0,
+  minor: 2
+} as const;
+
 export interface ProtocolVersion {
   major: number;
   minor: number;

@@ -9,6 +9,9 @@ artifacts without copying Core internals.
 
 ```text
 protocol/
+├── LICENSE
+├── package.json
+├── scripts/check-package.mjs
 ├── schemas/v0.1.0/core-studio.schema.json
 ├── schemas/v0.2.0/core-studio.schema.json
 ├── test-vectors/v0.1.0/
@@ -21,9 +24,41 @@ The current Core/Studio protocol is `v0.2.0`. It adds `get_snapshot` so
 clients can hydrate Core-owned MVP layout, profile state, and persisted
 assignments after reconnect or restart.
 
+## TypeScript Package
+
+`protocol/` is also the package root for the Studio-facing
+`@keyro/protocol` TypeScript package. Publish this directory as an immutable
+package release, then pin Studio to the exact package version. Before registry
+publishing is available, create a tarball with `npm pack ./protocol` and
+install that tarball in Studio for local verification.
+
+Use versioned exports only:
+
+```ts
+import type { ClientEnvelope, ServerMessage } from "@keyro/protocol/core-studio/v0.2.0";
+import { KEYRO_PROTOCOL_VERSION } from "@keyro/protocol/core-studio/v0.2.0";
+```
+
+Schema and test-vector artifacts are exported by versioned package paths:
+
+```ts
+import schema from "@keyro/protocol/schemas/v0.2.0/core-studio";
+import snapshotVector from "@keyro/protocol/test-vectors/v0.2.0/snapshot-response";
+```
+
+The package intentionally does not expose an unversioned `core-studio` export.
+Consumers must opt in to a concrete protocol version so minor `0.x` changes do
+not silently alter the contract they compile against.
+
+This first package release ships only `v0.2.0` artifacts. Older protocol
+artifacts remain in this repository for Core compatibility tests, but are not
+part of the initial npm package surface.
+
 ## Rules
 
 - Treat JSON Schema files as the protocol source of truth.
+- Keep `protocol/package.json` aligned with the current generated TypeScript,
+  schema, and test-vector artifacts.
 - Keep Core domain/application models separate from protocol DTOs.
 - Commit generated artifacts so Studio can consume them before packaging is
   automated.
