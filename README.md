@@ -37,7 +37,10 @@ leak into Core internals.
 
 Current protocol: `0.2.0`. Protocol `0.x` handshakes require an exact version
 match. Studio should consume the checked-in schema, test vectors, and
-TypeScript artifact from `protocol/` instead of copying Core internals.
+TypeScript artifact from `protocol/` instead of copying Core internals. The
+`protocol/` directory is the package root for `@keyro/protocol` and exposes
+only versioned Studio-facing exports such as
+`@keyro/protocol/core-studio/v0.2.0`.
 
 ## Development
 
@@ -46,4 +49,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --workspace --locked
+npm --prefix protocol run check:package
 ```
