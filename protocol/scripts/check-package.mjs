@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-assert.equal(manifest.name, "@keyro/protocol");
+assert.equal(manifest.name, "@mugi111/keyro-protocol");
 assert.equal(manifest.version, "0.2.0");
 assert.equal(manifest.type, "module");
 assert.equal(manifest.license, "Apache-2.0");
@@ -52,4 +52,4 @@ const snapshotVector = JSON.parse(readFileSync(join(packageRoot, "test-vectors/v
 assert.equal(schema.$id, "https://keyro.dev/protocol/v0.2.0/core-studio.schema.json");
 assert.equal(snapshotVector.type, "snapshot");
 
-console.log("@keyro/protocol package metadata is aligned with v0.2.0 artifacts.");
+console.log("@mugi111/keyro-protocol package metadata is aligned with v0.2.0 artifacts.");

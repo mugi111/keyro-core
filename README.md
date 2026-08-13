@@ -38,9 +38,9 @@ leak into Core internals.
 Current protocol: `0.2.0`. Protocol `0.x` handshakes require an exact version
 match. Studio should consume the checked-in schema, test vectors, and
 TypeScript artifact from `protocol/` instead of copying Core internals. The
-`protocol/` directory is the package root for `@keyro/protocol` and exposes
+`protocol/` directory is the package root for `@mugi111/keyro-protocol` and exposes
 only versioned Studio-facing exports such as
-`@keyro/protocol/core-studio/v0.2.0`.
+`@mugi111/keyro-protocol/core-studio/v0.2.0`.
 
 ## Development
 

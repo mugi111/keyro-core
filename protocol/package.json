@@ -1,5 +1,5 @@
 {
-  "name": "@keyro/protocol",
+  "name": "@mugi111/keyro-protocol",
   "version": "0.2.0",
   "description": "Versioned Keyro Core, Studio, and Device protocol schemas, TypeScript contracts, and test vectors.",
   "type": "module",
