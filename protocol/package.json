@@ -1,6 +1,6 @@
 {
   "name": "@mugi111/keyro-protocol",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Versioned Keyro Core, Studio, and Device protocol schemas, TypeScript contracts, and test vectors.",
   "type": "module",
   "license": "Apache-2.0",
