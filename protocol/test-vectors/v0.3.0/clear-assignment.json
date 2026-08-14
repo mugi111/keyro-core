@@ -1,0 +1,12 @@
+{
+  "request_id": "req-clear-assignment",
+  "message": {
+    "type": "clear_assignment",
+    "profile_id": "550e8400-e29b-41d4-a716-446655440000",
+    "control": {
+      "kind": "key",
+      "page": 0,
+      "key": 0
+    }
+  }
+}

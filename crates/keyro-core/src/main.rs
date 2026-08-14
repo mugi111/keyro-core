@@ -317,7 +317,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.2.0/handshake.json"
+                "../../../protocol/test-vectors/v0.3.0/handshake.json"
             ))
         )
         .unwrap();
@@ -392,7 +392,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.2.0/handshake.json"
+                "../../../protocol/test-vectors/v0.3.0/handshake.json"
             ))
         )
         .unwrap();
@@ -459,7 +459,7 @@ mod tests {
             client,
             "{}",
             compact_json(include_str!(
-                "../../../protocol/test-vectors/v0.2.0/handshake.json"
+                "../../../protocol/test-vectors/v0.3.0/handshake.json"
             ))
         )
         .unwrap();

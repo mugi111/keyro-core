@@ -1,0 +1,19 @@
+{
+  "request_id": "req-save-assignment",
+  "message": {
+    "type": "save_assignment",
+    "assignment": {
+      "profile_id": "550e8400-e29b-41d4-a716-446655440000",
+      "control": {
+        "kind": "encoder",
+        "page": 0,
+        "encoder": 1,
+        "operation": "right"
+      },
+      "action": {
+        "kind": "open_url",
+        "url": "https://example.com"
+      }
+    }
+  }
+}

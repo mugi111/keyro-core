@@ -95,6 +95,18 @@ impl ProfileRepository for SqliteProfileRepository {
         Ok(profile)
     }
 
+    fn create_profile(&self, name: String) -> Result<Profile, AppError> {
+        let profile = Profile::new(name, false)?;
+        let connection = self.connection.lock().unwrap();
+        connection
+            .execute(
+                "INSERT INTO profiles(id, name, is_active) VALUES (?1, ?2, 0)",
+                params![profile.id.to_string(), profile.name],
+            )
+            .map_err(to_app_error)?;
+        Ok(profile)
+    }
+
     fn list_profiles(&self) -> Result<Vec<Profile>, AppError> {
         let connection = self.connection.lock().unwrap();
         let mut statement = connection
@@ -120,9 +132,34 @@ impl ProfileRepository for SqliteProfileRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(to_app_error)
     }
 
+    fn rename_profile(&self, profile_id: ProfileId, name: String) -> Result<Profile, AppError> {
+        let mut profiles = self.list_profiles()?;
+        let profile = profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .ok_or(AppError::ProfileNotFound)?;
+        profile.rename(name)?;
+
+        let connection = self.connection.lock().unwrap();
+        let updated = connection
+            .execute(
+                "UPDATE profiles SET name = ?1 WHERE id = ?2",
+                params![profile.name, profile_id.to_string()],
+            )
+            .map_err(to_app_error)?;
+        if updated != 1 {
+            return Err(AppError::ProfileNotFound);
+        }
+
+        Ok(profile.clone())
+    }
+
     fn set_active_profile(&self, profile_id: ProfileId) -> Result<(), AppError> {
         let mut connection = self.connection.lock().unwrap();
         let transaction = connection.transaction().map_err(to_app_error)?;
+        if !profile_exists(&transaction, profile_id)? {
+            return Err(AppError::ProfileNotFound);
+        }
         let updated = transaction
             .execute("UPDATE profiles SET is_active = 0 WHERE is_active = 1", [])
             .map_err(to_app_error)?;
@@ -137,9 +174,7 @@ impl ProfileRepository for SqliteProfileRepository {
             )
             .map_err(to_app_error)?;
         if updated != 1 {
-            return Err(AppError::Storage(format!(
-                "profile {profile_id} does not exist"
-            )));
+            return Err(AppError::ProfileNotFound);
         }
 
         transaction.commit().map_err(to_app_error)
@@ -148,6 +183,9 @@ impl ProfileRepository for SqliteProfileRepository {
     fn save_assignment(&self, assignment: &Assignment) -> Result<(), AppError> {
         let mut connection = self.connection.lock().unwrap();
         let transaction = connection.transaction().map_err(to_app_error)?;
+        if !profile_exists(&transaction, assignment.profile_id)? {
+            return Err(AppError::ProfileNotFound);
+        }
         transaction
             .execute(
                 "DELETE FROM assignments
@@ -190,6 +228,32 @@ impl ProfileRepository for SqliteProfileRepository {
         }
 
         transaction.commit().map_err(to_app_error)
+    }
+
+    fn clear_assignment(&self, profile_id: ProfileId, control: ControlId) -> Result<(), AppError> {
+        let connection = self.connection.lock().unwrap();
+        if !profile_exists(&connection, profile_id)? {
+            return Err(AppError::ProfileNotFound);
+        }
+        let (page, control_kind, control_index, operation) = encode_control(control);
+        connection
+            .execute(
+                "DELETE FROM assignments
+                 WHERE profile_id = ?1
+                   AND page_index = ?2
+                   AND control_kind = ?3
+                   AND control_index = ?4
+                   AND control_operation = ?5",
+                params![
+                    profile_id.to_string(),
+                    page,
+                    control_kind,
+                    control_index,
+                    operation
+                ],
+            )
+            .map_err(to_app_error)?;
+        Ok(())
     }
 
     fn load_snapshot_state(&self) -> Result<SnapshotState, AppError> {
@@ -245,6 +309,18 @@ impl ProfileRepository for SqliteProfileRepository {
             }))
         }
     }
+}
+
+fn profile_exists(connection: &Connection, profile_id: ProfileId) -> Result<bool, AppError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM profiles WHERE id = ?1",
+            params![profile_id.to_string()],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(to_app_error)
 }
 
 fn list_profiles_locked(connection: &Connection) -> Result<Vec<Profile>, AppError> {
@@ -540,6 +616,33 @@ mod tests {
     }
 
     #[test]
+    fn file_database_restores_created_and_renamed_profiles() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_path_buf();
+        let profile_id;
+        {
+            let repository = SqliteProfileRepository::open(&path).unwrap();
+            repository.ensure_default_profile().unwrap();
+            let profile = repository.create_profile("Work".to_owned()).unwrap();
+            profile_id = profile.id;
+            repository
+                .rename_profile(profile_id, "Deep Work".to_owned())
+                .unwrap();
+        }
+
+        let repository = SqliteProfileRepository::open(&path).unwrap();
+        let profiles = repository.list_profiles().unwrap();
+
+        assert!(profiles.iter().any(|profile| profile.id == profile_id
+            && profile.name == "Deep Work"
+            && !profile.is_active));
+        assert_eq!(
+            profiles.iter().filter(|profile| profile.is_active).count(),
+            1
+        );
+    }
+
+    #[test]
     fn snapshot_state_preserves_ordered_assignment_actions() {
         let repository = SqliteProfileRepository::in_memory().unwrap();
         let profile = repository.ensure_default_profile().unwrap();
@@ -563,6 +666,122 @@ mod tests {
             repository.load_snapshot_state().unwrap().assignments,
             vec![assignment]
         );
+    }
+
+    #[test]
+    fn persists_profile_create_rename_and_assignment_clear() {
+        let repository = SqliteProfileRepository::in_memory().unwrap();
+        let default_profile = repository.ensure_default_profile().unwrap();
+        let control = ControlId::encoder(0, 0, EncoderOperation::Press).unwrap();
+        let assignment = Assignment::single(
+            default_profile.id,
+            control,
+            Action::OpenUrl {
+                url: SafeUrl::parse("https://example.com").unwrap(),
+            },
+        )
+        .unwrap();
+        repository.save_assignment(&assignment).unwrap();
+
+        let work = repository.create_profile(" Work ".to_owned()).unwrap();
+        assert_eq!(work.name, " Work ");
+        assert!(!work.is_active);
+
+        let renamed = repository
+            .rename_profile(work.id, " Deep Work ".to_owned())
+            .unwrap();
+        assert_eq!(renamed.name, " Deep Work ");
+
+        repository
+            .clear_assignment(default_profile.id, control)
+            .unwrap();
+
+        let snapshot = repository.load_snapshot_state().unwrap();
+        assert!(snapshot
+            .profiles
+            .iter()
+            .any(|profile| profile.id == work.id && profile.name == " Deep Work "));
+        assert!(snapshot.assignments.is_empty());
+    }
+
+    #[test]
+    fn clear_assignment_removes_only_the_targeted_control_and_is_idempotent() {
+        let repository = SqliteProfileRepository::in_memory().unwrap();
+        let profile = repository.ensure_default_profile().unwrap();
+        let first_control = ControlId::key(0, 0).unwrap();
+        let second_control = ControlId::key(0, 1).unwrap();
+        let first = Assignment::single(
+            profile.id,
+            first_control,
+            Action::OpenUrl {
+                url: SafeUrl::parse("https://example.com/first").unwrap(),
+            },
+        )
+        .unwrap();
+        let second = Assignment::single(
+            profile.id,
+            second_control,
+            Action::OpenUrl {
+                url: SafeUrl::parse("https://example.com/second").unwrap(),
+            },
+        )
+        .unwrap();
+        repository.save_assignment(&first).unwrap();
+        repository.save_assignment(&second).unwrap();
+
+        repository
+            .clear_assignment(profile.id, first_control)
+            .unwrap();
+        repository
+            .clear_assignment(profile.id, first_control)
+            .unwrap();
+
+        assert!(repository
+            .find_assignment(profile.id, first_control)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            repository
+                .find_assignment(profile.id, second_control)
+                .unwrap()
+                .unwrap(),
+            second
+        );
+    }
+
+    #[test]
+    fn profile_mutations_reject_missing_profiles() {
+        let repository = SqliteProfileRepository::in_memory().unwrap();
+        repository.ensure_default_profile().unwrap();
+        let missing_profile = ProfileId::new();
+
+        assert!(matches!(
+            repository
+                .rename_profile(missing_profile, "Missing".to_owned())
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
+        assert!(matches!(
+            repository
+                .clear_assignment(missing_profile, ControlId::key(0, 0).unwrap())
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
+        assert!(matches!(
+            repository
+                .save_assignment(
+                    &Assignment::single(
+                        missing_profile,
+                        ControlId::key(0, 0).unwrap(),
+                        Action::OpenUrl {
+                            url: SafeUrl::parse("https://example.com").unwrap()
+                        },
+                    )
+                    .unwrap()
+                )
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
     }
 
     #[test]

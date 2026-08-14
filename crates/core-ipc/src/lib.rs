@@ -147,6 +147,10 @@ pub fn response_from_core(request_id: String, response: CoreResponse) -> ServerM
             request_id,
             profiles: profiles.into_iter().map(profile_to_dto).collect(),
         },
+        CoreResponse::Profile { profile } => ServerMessage::Profile {
+            request_id,
+            profile: profile_to_dto(profile),
+        },
         CoreResponse::Acknowledged => ServerMessage::Acknowledged { request_id },
     }
 }
@@ -221,6 +225,7 @@ pub fn error_message(request_id: Option<String>, error: &AppError) -> ServerMess
         | AppError::ActiveProfileMissing
         | AppError::AssignmentNotFound
         | AppError::AssignmentHasNoAction => (ErrorCode::ValidationFailed, "validation failed"),
+        AppError::ProfileNotFound => (ErrorCode::NotFound, "profile not found"),
         AppError::OpenUrl(_) | AppError::Storage(_) | AppError::EventSink(_) => {
             (ErrorCode::Internal, "command failed")
         }
@@ -252,11 +257,22 @@ fn command_from_message(message: ClientMessage) -> Result<CoreCommand, IpcError>
         ClientMessage::Handshake(_) => Err(IpcError::HandshakeRequiresSession),
         ClientMessage::GetSnapshot(_) => Ok(CoreCommand::GetSnapshot),
         ClientMessage::ListProfiles(_) => Ok(CoreCommand::ListProfiles),
+        ClientMessage::CreateProfile(message) => {
+            Ok(CoreCommand::CreateProfile { name: message.name })
+        }
+        ClientMessage::RenameProfile(message) => Ok(CoreCommand::RenameProfile {
+            profile_id: ProfileId::parse(&message.profile_id)?,
+            name: message.name,
+        }),
         ClientMessage::SetActiveProfile(message) => Ok(CoreCommand::SetActiveProfile {
             profile_id: ProfileId::parse(&message.profile_id)?,
         }),
         ClientMessage::SaveAssignment(message) => Ok(CoreCommand::SaveAssignment {
             assignment: assignment_from_dto(message.assignment)?,
+        }),
+        ClientMessage::ClearAssignment(message) => Ok(CoreCommand::ClearAssignment {
+            profile_id: ProfileId::parse(&message.profile_id)?,
+            control: control_from_dto(message.control)?,
         }),
         ClientMessage::VirtualControlInput(message) => Ok(CoreCommand::VirtualControlInput {
             control: control_from_dto(message.control)?,
@@ -430,6 +446,35 @@ mod tests {
     }
 
     #[test]
+    fn decodes_protocol_profile_mutation_commands() {
+        let (request_id, command) = decode_protocol_command(include_str!(
+            "../../../protocol/test-vectors/v0.3.0/create-profile.json"
+        ))
+        .unwrap();
+        assert_eq!(request_id, "req-create-profile");
+        assert_eq!(
+            command,
+            CoreCommand::CreateProfile {
+                name: "Work".to_owned()
+            }
+        );
+
+        let (request_id, command) = decode_protocol_command(include_str!(
+            "../../../protocol/test-vectors/v0.3.0/rename-profile.json"
+        ))
+        .unwrap();
+        assert_eq!(request_id, "req-rename-profile");
+        assert!(matches!(command, CoreCommand::RenameProfile { .. }));
+
+        let (request_id, command) = decode_protocol_command(include_str!(
+            "../../../protocol/test-vectors/v0.3.0/clear-assignment.json"
+        ))
+        .unwrap();
+        assert_eq!(request_id, "req-clear-assignment");
+        assert!(matches!(command, CoreCommand::ClearAssignment { .. }));
+    }
+
+    #[test]
     fn encodes_snapshot_response_with_layout_and_assignments() {
         let profile = keyro_core_domain::Profile {
             id: ProfileId::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
@@ -472,6 +517,33 @@ mod tests {
         assert_eq!(assignments[0].profile_id, profile.id.to_string());
         assert_eq!(assignments[0].control, ControlDto::Key { page: 0, key: 0 });
         assert_eq!(assignments[0].actions.len(), 1);
+    }
+
+    #[test]
+    fn encodes_profile_response() {
+        let profile = keyro_core_domain::Profile {
+            id: ProfileId::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            name: "Work".to_owned(),
+            is_active: false,
+        };
+
+        let ServerMessage::Profile {
+            request_id,
+            profile: encoded,
+        } = response_from_core(
+            "req-create-profile".to_owned(),
+            CoreResponse::Profile {
+                profile: profile.clone(),
+            },
+        )
+        else {
+            panic!("expected profile response");
+        };
+
+        assert_eq!(request_id, "req-create-profile");
+        assert_eq!(encoded.id, profile.id.to_string());
+        assert_eq!(encoded.name, "Work");
+        assert!(!encoded.is_active);
     }
 
     #[test]
@@ -520,7 +592,7 @@ mod tests {
     #[test]
     fn session_accepts_handshake_before_commands() {
         let mut session = ProtocolSession::new("core-test");
-        let handshake = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.3.0/handshake.json");
 
         let ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted {
             request_id,
@@ -572,10 +644,10 @@ mod tests {
             "message": {
                 "type": "handshake",
                 "component": "studio",
-                "component_version": "0.2.0",
+                "component_version": "0.3.0",
                 "protocol": {
                     "major": 0,
-                    "minor": 3
+                    "minor": 4
                 }
             }
         }"#;
@@ -603,7 +675,7 @@ mod tests {
     #[test]
     fn duplicate_handshake_is_rejected_without_closing_session() {
         let mut session = ProtocolSession::new("core-test");
-        let handshake = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
+        let handshake = include_str!("../../../protocol/test-vectors/v0.3.0/handshake.json");
         assert!(matches!(
             session.receive_line(handshake),
             ProtocolDispatch::Immediate(ServerMessage::HandshakeAccepted { .. })
@@ -614,10 +686,10 @@ mod tests {
             "message": {
                 "type": "handshake",
                 "component": "studio",
-                "component_version": "0.2.0",
+                "component_version": "0.3.0",
                 "protocol": {
                     "major": 0,
-                    "minor": 3
+                    "minor": 4
                 }
             }
         }"#;
@@ -651,6 +723,18 @@ mod tests {
         assert_eq!(request_id, Some("req-storage".to_owned()));
         assert_eq!(error.code, ErrorCode::Internal);
         assert_eq!(error.message, "command failed");
+    }
+
+    #[test]
+    fn maps_missing_profiles_to_not_found_protocol_errors() {
+        let message = error_message(Some("req-missing".to_owned()), &AppError::ProfileNotFound);
+
+        let ServerMessage::Error { request_id, error } = message else {
+            panic!("expected error message");
+        };
+        assert_eq!(request_id, Some("req-missing".to_owned()));
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert_eq!(error.message, "profile not found");
     }
 
     #[test]

@@ -17,10 +17,7 @@ pub struct Profile {
 
 impl Profile {
     pub fn new(name: impl Into<String>, is_active: bool) -> Result<Self, DomainError> {
-        let name = name.into();
-        if name.trim().is_empty() {
-            return Err(DomainError::EmptyProfileName);
-        }
+        let name = validate_profile_name(name)?;
 
         Ok(Self {
             id: ProfileId::new(),
@@ -28,6 +25,19 @@ impl Profile {
             is_active,
         })
     }
+
+    pub fn rename(&mut self, name: impl Into<String>) -> Result<(), DomainError> {
+        self.name = validate_profile_name(name)?;
+        Ok(())
+    }
+}
+
+pub fn validate_profile_name(name: impl Into<String>) -> Result<String, DomainError> {
+    let name = name.into();
+    if name.trim().is_empty() {
+        return Err(DomainError::EmptyProfileName);
+    }
+    Ok(name)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -296,6 +306,19 @@ mod tests {
         assert_eq!(
             ensure_exactly_one_active(&[active.clone(), active]),
             Err(DomainError::ActiveProfileInvariant { active_count: 2 })
+        );
+    }
+
+    #[test]
+    fn validates_profile_names_without_trimming() {
+        let mut profile = Profile::new("  Work  ", false).unwrap();
+
+        assert_eq!(profile.name, "  Work  ");
+        profile.rename("  Deep Work  ").unwrap();
+        assert_eq!(profile.name, "  Deep Work  ");
+        assert_eq!(
+            Profile::new("   ", false).unwrap_err(),
+            DomainError::EmptyProfileName
         );
     }
 }

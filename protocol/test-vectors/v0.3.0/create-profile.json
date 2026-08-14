@@ -1,0 +1,7 @@
+{
+  "request_id": "req-create-profile",
+  "message": {
+    "type": "create_profile",
+    "name": "Work"
+  }
+}

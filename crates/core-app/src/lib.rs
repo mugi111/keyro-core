@@ -9,9 +9,12 @@ use uuid::Uuid;
 
 pub trait ProfileRepository: Send + Sync {
     fn ensure_default_profile(&self) -> Result<Profile, AppError>;
+    fn create_profile(&self, name: String) -> Result<Profile, AppError>;
     fn list_profiles(&self) -> Result<Vec<Profile>, AppError>;
+    fn rename_profile(&self, profile_id: ProfileId, name: String) -> Result<Profile, AppError>;
     fn set_active_profile(&self, profile_id: ProfileId) -> Result<(), AppError>;
     fn save_assignment(&self, assignment: &Assignment) -> Result<(), AppError>;
+    fn clear_assignment(&self, profile_id: ProfileId, control: ControlId) -> Result<(), AppError>;
     fn load_snapshot_state(&self) -> Result<SnapshotState, AppError>;
     fn find_assignment(
         &self,
@@ -32,15 +35,33 @@ pub trait UrlOpener: Send + Sync {
 pub enum CoreCommand {
     GetSnapshot,
     ListProfiles,
-    SetActiveProfile { profile_id: ProfileId },
-    SaveAssignment { assignment: Assignment },
-    VirtualControlInput { control: ControlId },
+    CreateProfile {
+        name: String,
+    },
+    RenameProfile {
+        profile_id: ProfileId,
+        name: String,
+    },
+    SetActiveProfile {
+        profile_id: ProfileId,
+    },
+    SaveAssignment {
+        assignment: Assignment,
+    },
+    ClearAssignment {
+        profile_id: ProfileId,
+        control: ControlId,
+    },
+    VirtualControlInput {
+        control: ControlId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreResponse {
     Snapshot { snapshot: CoreSnapshot },
     Profiles { profiles: Vec<Profile> },
+    Profile { profile: Profile },
     Acknowledged,
 }
 
@@ -176,12 +197,27 @@ where
                 ensure_exactly_one_active(&profiles).map_err(AppError::Domain)?;
                 Ok(CoreResponse::Profiles { profiles })
             }
+            CoreCommand::CreateProfile { name } => {
+                let profile = self.repository.create_profile(name)?;
+                Ok(CoreResponse::Profile { profile })
+            }
+            CoreCommand::RenameProfile { profile_id, name } => {
+                let profile = self.repository.rename_profile(profile_id, name)?;
+                Ok(CoreResponse::Profile { profile })
+            }
             CoreCommand::SetActiveProfile { profile_id } => {
                 self.repository.set_active_profile(profile_id)?;
                 Ok(CoreResponse::Acknowledged)
             }
             CoreCommand::SaveAssignment { assignment } => {
                 self.repository.save_assignment(&assignment)?;
+                Ok(CoreResponse::Acknowledged)
+            }
+            CoreCommand::ClearAssignment {
+                profile_id,
+                control,
+            } => {
+                self.repository.clear_assignment(profile_id, control)?;
                 Ok(CoreResponse::Acknowledged)
             }
             CoreCommand::VirtualControlInput { control } => {
@@ -251,6 +287,8 @@ pub enum AppError {
     EventSink(String),
     #[error("active profile is missing")]
     ActiveProfileMissing,
+    #[error("profile was not found")]
+    ProfileNotFound,
     #[error("assignment was not found for the active profile and control")]
     AssignmentNotFound,
     #[error("assignment has no action")]
@@ -304,12 +342,31 @@ mod tests {
             Ok(profile)
         }
 
+        fn create_profile(&self, name: String) -> Result<Profile, AppError> {
+            let profile = Profile::new(name, false)?;
+            self.profiles.lock().unwrap().push(profile.clone());
+            Ok(profile)
+        }
+
         fn list_profiles(&self) -> Result<Vec<Profile>, AppError> {
             Ok(self.profiles.lock().unwrap().clone())
         }
 
+        fn rename_profile(&self, profile_id: ProfileId, name: String) -> Result<Profile, AppError> {
+            let mut profiles = self.profiles.lock().unwrap();
+            let profile = profiles
+                .iter_mut()
+                .find(|profile| profile.id == profile_id)
+                .ok_or(AppError::ProfileNotFound)?;
+            profile.rename(name)?;
+            Ok(profile.clone())
+        }
+
         fn set_active_profile(&self, profile_id: ProfileId) -> Result<(), AppError> {
             let mut profiles = self.profiles.lock().unwrap();
+            if !profiles.iter().any(|profile| profile.id == profile_id) {
+                return Err(AppError::ProfileNotFound);
+            }
             for profile in profiles.iter_mut() {
                 profile.is_active = profile.id == profile_id;
             }
@@ -317,12 +374,41 @@ mod tests {
         }
 
         fn save_assignment(&self, assignment: &Assignment) -> Result<(), AppError> {
+            if !self
+                .profiles
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|profile| profile.id == assignment.profile_id)
+            {
+                return Err(AppError::ProfileNotFound);
+            }
             let mut assignments = self.assignments.lock().unwrap();
             assignments.retain(|candidate| {
                 !(candidate.profile_id == assignment.profile_id
                     && candidate.control == assignment.control)
             });
             assignments.push(assignment.clone());
+            Ok(())
+        }
+
+        fn clear_assignment(
+            &self,
+            profile_id: ProfileId,
+            control: ControlId,
+        ) -> Result<(), AppError> {
+            if !self
+                .profiles
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|profile| profile.id == profile_id)
+            {
+                return Err(AppError::ProfileNotFound);
+            }
+            self.assignments.lock().unwrap().retain(|assignment| {
+                !(assignment.profile_id == profile_id && assignment.control == control)
+            });
             Ok(())
         }
 
@@ -454,6 +540,135 @@ mod tests {
         assert_eq!(snapshot.assignments.len(), 1);
         assert_eq!(snapshot.assignments[0].control, control);
         assert_eq!(snapshot.assignments[0].actions.len(), 2);
+    }
+
+    #[test]
+    fn profile_commands_create_rename_and_clear_assignments() {
+        let repository = MemoryRepository::new();
+        let default_profile = repository.ensure_default_profile().unwrap();
+        let control = ControlId::key(0, 0).unwrap();
+        repository
+            .save_assignment(
+                &Assignment::single(
+                    default_profile.id,
+                    control,
+                    Action::OpenUrl {
+                        url: SafeUrl::parse("https://example.com").unwrap(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let service = CoreService::new(
+            repository,
+            RecordingOpener::default(),
+            RecordingEvents::default(),
+        );
+
+        let CoreResponse::Profile { profile: work } = service
+            .handle_command(CoreCommand::CreateProfile {
+                name: " Work ".to_owned(),
+            })
+            .unwrap()
+        else {
+            panic!("expected profile response");
+        };
+        assert_eq!(work.name, " Work ");
+        assert!(!work.is_active);
+
+        let CoreResponse::Profiles { profiles } =
+            service.handle_command(CoreCommand::ListProfiles).unwrap()
+        else {
+            panic!("expected profiles response");
+        };
+        assert!(profiles.iter().any(|profile| profile.id == work.id));
+
+        let CoreResponse::Profile { profile: renamed } = service
+            .handle_command(CoreCommand::RenameProfile {
+                profile_id: work.id,
+                name: " Deep Work ".to_owned(),
+            })
+            .unwrap()
+        else {
+            panic!("expected profile response");
+        };
+        assert_eq!(renamed.id, work.id);
+        assert_eq!(renamed.name, " Deep Work ");
+        assert!(!renamed.is_active);
+        assert_eq!(
+            service
+                .handle_command(CoreCommand::ClearAssignment {
+                    profile_id: default_profile.id,
+                    control
+                })
+                .unwrap(),
+            CoreResponse::Acknowledged
+        );
+
+        let CoreResponse::Snapshot { snapshot } =
+            service.handle_command(CoreCommand::GetSnapshot).unwrap()
+        else {
+            panic!("expected snapshot response");
+        };
+        assert!(snapshot
+            .profiles
+            .iter()
+            .any(|profile| profile.name == " Deep Work " && !profile.is_active));
+        assert!(snapshot.assignments.is_empty());
+    }
+
+    #[test]
+    fn profile_commands_reject_invalid_inputs() {
+        let repository = MemoryRepository::new();
+        repository.ensure_default_profile().unwrap();
+        let service = CoreService::new(
+            repository,
+            RecordingOpener::default(),
+            RecordingEvents::default(),
+        );
+        let missing_profile = ProfileId::new();
+
+        assert!(matches!(
+            service
+                .handle_command(CoreCommand::CreateProfile {
+                    name: "   ".to_owned()
+                })
+                .unwrap_err(),
+            AppError::Domain(keyro_core_domain::DomainError::EmptyProfileName)
+        ));
+        assert!(matches!(
+            service
+                .handle_command(CoreCommand::RenameProfile {
+                    profile_id: missing_profile,
+                    name: "Renamed".to_owned()
+                })
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
+        assert!(matches!(
+            service
+                .handle_command(CoreCommand::ClearAssignment {
+                    profile_id: missing_profile,
+                    control: ControlId::key(0, 0).unwrap()
+                })
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
+        assert!(matches!(
+            service
+                .handle_command(CoreCommand::SaveAssignment {
+                    assignment: Assignment::single(
+                        missing_profile,
+                        ControlId::key(0, 0).unwrap(),
+                        Action::OpenUrl {
+                            url: SafeUrl::parse("https://example.com").unwrap()
+                        },
+                    )
+                    .unwrap()
+                })
+                .unwrap_err(),
+            AppError::ProfileNotFound
+        ));
     }
 
     #[test]
