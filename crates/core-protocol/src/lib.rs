@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.0";
+pub const PROTOCOL_VERSION: &str = "0.3.0";
 pub const PROTOCOL_MAJOR: u16 = 0;
-pub const PROTOCOL_MINOR: u16 = 2;
+pub const PROTOCOL_MINOR: u16 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,8 +18,11 @@ pub enum ClientMessage {
     Handshake(HandshakeMessage),
     GetSnapshot(GetSnapshotMessage),
     ListProfiles(ListProfilesMessage),
+    CreateProfile(CreateProfileMessage),
+    RenameProfile(RenameProfileMessage),
     SetActiveProfile(SetActiveProfileMessage),
     SaveAssignment(SaveAssignmentMessage),
+    ClearAssignment(ClearAssignmentMessage),
     VirtualControlInput(VirtualControlInputMessage),
 }
 
@@ -41,6 +44,19 @@ pub struct ListProfilesMessage {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CreateProfileMessage {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameProfileMessage {
+    pub profile_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetActiveProfileMessage {
     pub profile_id: String,
 }
@@ -49,6 +65,13 @@ pub struct SetActiveProfileMessage {
 #[serde(deny_unknown_fields)]
 pub struct SaveAssignmentMessage {
     pub assignment: AssignmentDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClearAssignmentMessage {
+    pub profile_id: String,
+    pub control: ControlDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +87,7 @@ pub enum ClientComponent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolVersion {
     pub major: u16,
     pub minor: u16,
@@ -132,6 +156,10 @@ pub enum ServerMessage {
     Profiles {
         request_id: String,
         profiles: Vec<ProfileDto>,
+    },
+    Profile {
+        request_id: String,
+        profile: ProfileDto,
     },
     Snapshot {
         request_id: String,
@@ -217,6 +245,7 @@ pub enum ErrorCode {
     IncompatibleProtocol,
     UnknownMessage,
     ValidationFailed,
+    NotFound,
     Internal,
 }
 
@@ -297,7 +326,7 @@ mod tests {
 
     #[test]
     fn decodes_handshake_test_vector() {
-        let input = include_str!("../../../protocol/test-vectors/v0.2.0/handshake.json");
+        let input = include_str!("../../../protocol/test-vectors/v0.3.0/handshake.json");
 
         let envelope = decode_client_envelope(input).unwrap();
 
@@ -306,10 +335,47 @@ mod tests {
             envelope.message,
             ClientMessage::Handshake(HandshakeMessage {
                 component: ClientComponent::Studio,
-                component_version: "0.2.0".to_owned(),
+                component_version: "0.3.0".to_owned(),
                 protocol: ProtocolVersion::current(),
             })
         );
+    }
+
+    #[test]
+    fn decodes_profile_command_test_vectors() {
+        let create = include_str!("../../../protocol/test-vectors/v0.3.0/create-profile.json");
+        let rename = include_str!("../../../protocol/test-vectors/v0.3.0/rename-profile.json");
+        let clear = include_str!("../../../protocol/test-vectors/v0.3.0/clear-assignment.json");
+
+        assert!(matches!(
+            decode_client_envelope(create).unwrap().message,
+            ClientMessage::CreateProfile(_)
+        ));
+        assert!(matches!(
+            decode_client_envelope(rename).unwrap().message,
+            ClientMessage::RenameProfile(_)
+        ));
+        assert!(matches!(
+            decode_client_envelope(clear).unwrap().message,
+            ClientMessage::ClearAssignment(_)
+        ));
+    }
+
+    #[test]
+    fn decodes_profile_response_test_vector() {
+        let input = include_str!("../../../protocol/test-vectors/v0.3.0/profile-response.json");
+
+        let message: ServerMessage = serde_json::from_str(input).unwrap();
+
+        let ServerMessage::Profile {
+            request_id,
+            profile,
+        } = message
+        else {
+            panic!("expected profile response");
+        };
+        assert_eq!(request_id, "req-create-profile");
+        assert_eq!(profile.name, "Work");
     }
 
     #[test]
@@ -371,6 +437,25 @@ mod tests {
             "message": {
                 "type": "list_profiles",
                 "unexpected": true
+            }
+        }"#;
+
+        assert!(decode_client_envelope(input).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_fields_inside_protocol_version() {
+        let input = r#"{
+            "request_id": "req-extra-protocol-field",
+            "message": {
+                "type": "handshake",
+                "component": "studio",
+                "component_version": "0.3.0",
+                "protocol": {
+                    "major": 0,
+                    "minor": 3,
+                    "patch": 1
+                }
             }
         }"#;
 

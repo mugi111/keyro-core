@@ -23,6 +23,7 @@ virtual control input, and route `open_url` actions.
 - Structured action events: `running`, `succeeded`, and `failed`.
 - Authoritative snapshot readback for MVP layout, profiles, and persisted
   assignments.
+- Profile creation, profile rename, and assignment clearing over local IPC.
 
 ## Protocol Status
 
@@ -35,12 +36,12 @@ The IPC crate maps protocol DTOs into Core application commands. Keep protocol
 DTOs separate from Core domain/application models so schema evolution does not
 leak into Core internals.
 
-Current protocol: `0.2.0`. Protocol `0.x` handshakes require an exact version
+Current protocol: `0.3.0`. Protocol `0.x` handshakes require an exact version
 match. Studio should consume the checked-in schema, test vectors, and
 TypeScript artifact from `protocol/` instead of copying Core internals. The
 `protocol/` directory is the package root for `@mugi111/keyro-protocol` and exposes
 only versioned Studio-facing exports such as
-`@mugi111/keyro-protocol/core-studio/v0.2.0`.
+`@mugi111/keyro-protocol/core-studio/v0.3.0`.
 
 ## Development
 

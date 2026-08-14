@@ -14,15 +14,19 @@ protocol/
 ├── scripts/check-package.mjs
 ├── schemas/v0.1.0/core-studio.schema.json
 ├── schemas/v0.2.0/core-studio.schema.json
+├── schemas/v0.3.0/core-studio.schema.json
 ├── test-vectors/v0.1.0/
 ├── test-vectors/v0.2.0/
+├── test-vectors/v0.3.0/
 ├── generated/typescript/v0.1.0/core-studio.ts
-└── generated/typescript/v0.2.0/core-studio.ts
+├── generated/typescript/v0.2.0/core-studio.ts
+└── generated/typescript/v0.3.0/core-studio.ts
 ```
 
-The current Core/Studio protocol is `v0.2.0`. It adds `get_snapshot` so
-clients can hydrate Core-owned MVP layout, profile state, and persisted
-assignments after reconnect or restart.
+The current Core/Studio protocol is `v0.3.0`. It adds `create_profile`,
+`rename_profile`, and `clear_assignment` so clients can mutate Core-owned
+profile state and remove assignments without becoming authoritative for stored
+state.
 
 ## TypeScript Package
 
@@ -35,24 +39,24 @@ install that tarball in Studio for local verification.
 Use versioned exports only:
 
 ```ts
-import type { ClientEnvelope, ServerMessage } from "@mugi111/keyro-protocol/core-studio/v0.2.0";
-import { KEYRO_PROTOCOL_VERSION } from "@mugi111/keyro-protocol/core-studio/v0.2.0";
+import type { ClientEnvelope, ServerMessage } from "@mugi111/keyro-protocol/core-studio/v0.3.0";
+import { KEYRO_PROTOCOL_VERSION } from "@mugi111/keyro-protocol/core-studio/v0.3.0";
 ```
 
 Schema and test-vector artifacts are exported by versioned package paths:
 
 ```ts
-import schema from "@mugi111/keyro-protocol/schemas/v0.2.0/core-studio";
-import snapshotVector from "@mugi111/keyro-protocol/test-vectors/v0.2.0/snapshot-response";
+import schema from "@mugi111/keyro-protocol/schemas/v0.3.0/core-studio";
+import snapshotVector from "@mugi111/keyro-protocol/test-vectors/v0.3.0/snapshot-response";
 ```
 
 The package intentionally does not expose an unversioned `core-studio` export.
 Consumers must opt in to a concrete protocol version so minor `0.x` changes do
 not silently alter the contract they compile against.
 
-This first package release ships only `v0.2.0` artifacts. Older protocol
+Each package release ships only its current protocol artifacts. Older protocol
 artifacts remain in this repository for Core compatibility tests, but are not
-part of the initial npm package surface.
+part of the npm package surface for new releases.
 
 ## Rules
 

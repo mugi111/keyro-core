@@ -1,6 +1,6 @@
 {
   "name": "@mugi111/keyro-protocol",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Versioned Keyro Core, Studio, and Device protocol schemas, TypeScript contracts, and test vectors.",
   "type": "module",
   "license": "Apache-2.0",
@@ -17,34 +17,46 @@
     "README.md",
     "LICENSE",
     "scripts/check-package.mjs",
-    "generated/javascript/v0.2.0/core-studio.js",
-    "generated/typescript/v0.2.0/core-studio.ts",
-    "schemas/v0.2.0/core-studio.schema.json",
-    "test-vectors/v0.2.0/*.json"
+    "generated/javascript/v0.3.0/core-studio.js",
+    "generated/typescript/v0.3.0/core-studio.ts",
+    "schemas/v0.3.0/core-studio.schema.json",
+    "test-vectors/v0.3.0/*.json"
   ],
   "exports": {
-    "./core-studio/v0.2.0": {
-      "types": "./generated/typescript/v0.2.0/core-studio.ts",
-      "import": "./generated/javascript/v0.2.0/core-studio.js",
-      "default": "./generated/javascript/v0.2.0/core-studio.js"
+    "./core-studio/v0.3.0": {
+      "types": "./generated/typescript/v0.3.0/core-studio.ts",
+      "import": "./generated/javascript/v0.3.0/core-studio.js",
+      "default": "./generated/javascript/v0.3.0/core-studio.js"
     },
-    "./schemas/v0.2.0/core-studio": {
-      "default": "./schemas/v0.2.0/core-studio.schema.json"
+    "./schemas/v0.3.0/core-studio": {
+      "default": "./schemas/v0.3.0/core-studio.schema.json"
     },
-    "./test-vectors/v0.2.0/get-snapshot": {
-      "default": "./test-vectors/v0.2.0/get-snapshot.json"
+    "./test-vectors/v0.3.0/clear-assignment": {
+      "default": "./test-vectors/v0.3.0/clear-assignment.json"
     },
-    "./test-vectors/v0.2.0/handshake": {
-      "default": "./test-vectors/v0.2.0/handshake.json"
+    "./test-vectors/v0.3.0/create-profile": {
+      "default": "./test-vectors/v0.3.0/create-profile.json"
     },
-    "./test-vectors/v0.2.0/save-assignment-open-url": {
-      "default": "./test-vectors/v0.2.0/save-assignment-open-url.json"
+    "./test-vectors/v0.3.0/get-snapshot": {
+      "default": "./test-vectors/v0.3.0/get-snapshot.json"
     },
-    "./test-vectors/v0.2.0/snapshot-response": {
-      "default": "./test-vectors/v0.2.0/snapshot-response.json"
+    "./test-vectors/v0.3.0/handshake": {
+      "default": "./test-vectors/v0.3.0/handshake.json"
     },
-    "./test-vectors/v0.2.0/virtual-control-input": {
-      "default": "./test-vectors/v0.2.0/virtual-control-input.json"
+    "./test-vectors/v0.3.0/profile-response": {
+      "default": "./test-vectors/v0.3.0/profile-response.json"
+    },
+    "./test-vectors/v0.3.0/rename-profile": {
+      "default": "./test-vectors/v0.3.0/rename-profile.json"
+    },
+    "./test-vectors/v0.3.0/save-assignment-open-url": {
+      "default": "./test-vectors/v0.3.0/save-assignment-open-url.json"
+    },
+    "./test-vectors/v0.3.0/snapshot-response": {
+      "default": "./test-vectors/v0.3.0/snapshot-response.json"
+    },
+    "./test-vectors/v0.3.0/virtual-control-input": {
+      "default": "./test-vectors/v0.3.0/virtual-control-input.json"
     }
   },
   "scripts": {
