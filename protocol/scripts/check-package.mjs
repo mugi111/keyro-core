@@ -7,7 +7,7 @@ const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
 assert.equal(manifest.name, "@mugi111/keyro-protocol");
-assert.equal(manifest.version, "0.2.0");
+assert.equal(manifest.version, "0.2.1");
 assert.equal(manifest.type, "module");
 assert.equal(manifest.license, "Apache-2.0");
 assert.equal(manifest.sideEffects, false);
