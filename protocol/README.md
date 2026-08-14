@@ -27,7 +27,7 @@ assignments after reconnect or restart.
 ## TypeScript Package
 
 `protocol/` is also the package root for the Studio-facing
-`@keyro/protocol` TypeScript package. Publish this directory as an immutable
+`@mugi111/keyro-protocol` TypeScript package. Publish this directory as an immutable
 package release, then pin Studio to the exact package version. Before registry
 publishing is available, create a tarball with `npm pack ./protocol` and
 install that tarball in Studio for local verification.
@@ -35,15 +35,15 @@ install that tarball in Studio for local verification.
 Use versioned exports only:
 
 ```ts
-import type { ClientEnvelope, ServerMessage } from "@keyro/protocol/core-studio/v0.2.0";
-import { KEYRO_PROTOCOL_VERSION } from "@keyro/protocol/core-studio/v0.2.0";
+import type { ClientEnvelope, ServerMessage } from "@mugi111/keyro-protocol/core-studio/v0.2.0";
+import { KEYRO_PROTOCOL_VERSION } from "@mugi111/keyro-protocol/core-studio/v0.2.0";
 ```
 
 Schema and test-vector artifacts are exported by versioned package paths:
 
 ```ts
-import schema from "@keyro/protocol/schemas/v0.2.0/core-studio";
-import snapshotVector from "@keyro/protocol/test-vectors/v0.2.0/snapshot-response";
+import schema from "@mugi111/keyro-protocol/schemas/v0.2.0/core-studio";
+import snapshotVector from "@mugi111/keyro-protocol/test-vectors/v0.2.0/snapshot-response";
 ```
 
 The package intentionally does not expose an unversioned `core-studio` export.
