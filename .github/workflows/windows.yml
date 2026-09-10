@@ -1,0 +1,32 @@
+name: Windows Core
+
+on:
+  push:
+    branches: [develop, 'feature/core-windows-*']
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust tools
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Format
+        run: cargo +stable fmt --all --check
+      - name: Clippy
+        run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests including named pipes
+        run: cargo +stable test --workspace --locked
+      - name: Build executable
+        run: cargo +stable build --release --workspace --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keyro-core-windows-x64
+          path: target/release/keyro-core.exe
