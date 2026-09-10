@@ -45,6 +45,11 @@ only versioned Studio-facing exports such as
 
 ## Development
 
+See [Core tasks](CORE_TASKS.md) for prioritized remaining work and
+[local IPC smoke test](LOCAL_IPC_SMOKE_TEST.md) for device-free macOS verification.
+The Unix development listener supports up to eight simultaneous connections.
+It still uses newline-delimited JSON without production framing/backpressure.
+
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings

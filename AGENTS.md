@@ -195,12 +195,18 @@ application interfaces, not the other way around.
 
 ## Commands
 
-Run commands from the repository root. This repository does not yet define a
-package manager, build system, or test command. When those are introduced,
-update this section with the canonical commands.
+Run commands from the repository root:
 
-Until then, use the closest available verification for the files being changed,
-such as formatting, linting, typechecking, tests, or documentation rendering.
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --workspace --locked
+npm --prefix protocol run check:package
+```
+
+Unix IPC integration tests require permission to bind local Unix sockets.
+Use `cargo run -p keyro-core` for local development.
 
 ## Testing Expectations
 
