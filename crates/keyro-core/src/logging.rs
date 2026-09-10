@@ -247,7 +247,7 @@ fn cleanup_logs(log_dir: &Path, retention: LogRetention) -> io::Result<()> {
         }
     }
 
-    retained.sort_by(|left, right| right.modified.cmp(&left.modified));
+    retained.sort_by_key(|log_file| std::cmp::Reverse(log_file.modified));
 
     let current_index = retained.iter().position(|log_file| log_file.is_current);
     let mut total_bytes = current_index

@@ -5,7 +5,6 @@ use keyro_core_ipc::{
     ProtocolSession,
 };
 use keyro_core_platform::SystemUrlOpener;
-#[cfg(unix)]
 use keyro_core_protocol::ServerMessage;
 use keyro_core_storage_sqlite::SqliteProfileRepository;
 use logging::{LogRetention, RotatingLogWriter};
@@ -14,13 +13,19 @@ use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod logging;
 mod single_instance;
+#[cfg(windows)]
+mod windows_ipc;
+
+#[cfg(unix)]
+type DevStream = UnixStream;
+#[cfg(windows)]
+type DevStream = std::fs::File;
 
 fn main() -> anyhow::Result<()> {
     let data_dir = default_data_dir().context("failed to resolve Keyro data directory")?;
@@ -156,21 +161,18 @@ fn run_dev_ipc(repository: SqliteProfileRepository, socket_path: PathBuf) -> any
     Ok(())
 }
 
-#[cfg(unix)]
 const MAX_DEV_CONNECTIONS: usize = 8;
 
-#[cfg(unix)]
 #[derive(Default)]
 struct DevConnections {
     workers: Vec<std::thread::JoinHandle<()>>,
     next_id: u64,
 }
 
-#[cfg(unix)]
 impl DevConnections {
     fn accept(
         &mut self,
-        stream: UnixStream,
+        stream: DevStream,
         repository: SqliteProfileRepository,
     ) -> std::io::Result<()> {
         // Reap only finished workers so an idle client cannot block acceptance.
@@ -208,16 +210,14 @@ impl DevConnections {
     }
 }
 
-#[cfg(unix)]
-fn handle_dev_connection(stream: UnixStream, repository: SqliteProfileRepository) {
+fn handle_dev_connection(stream: DevStream, repository: SqliteProfileRepository) {
     if let Err(error) = handle_dev_connection_inner(stream, repository, SystemUrlOpener) {
         warn!(%error, "development IPC connection failed");
     }
 }
 
-#[cfg(unix)]
 fn handle_dev_connection_inner<O>(
-    stream: UnixStream,
+    stream: DevStream,
     repository: SqliteProfileRepository,
     url_opener: O,
 ) -> anyhow::Result<()>
@@ -251,20 +251,17 @@ where
     Ok(())
 }
 
-#[cfg(unix)]
 #[derive(Clone)]
 struct IpcEventSink {
-    writer: Arc<Mutex<UnixStream>>,
+    writer: Arc<Mutex<DevStream>>,
 }
 
-#[cfg(unix)]
 impl IpcEventSink {
-    fn new(writer: Arc<Mutex<UnixStream>>) -> Self {
+    fn new(writer: Arc<Mutex<DevStream>>) -> Self {
         Self { writer }
     }
 }
 
-#[cfg(unix)]
 impl EventSink for IpcEventSink {
     fn emit(&self, event: CoreEvent) -> Result<(), AppError> {
         info!(?event, "Core event");
@@ -277,9 +274,8 @@ impl EventSink for IpcEventSink {
     }
 }
 
-#[cfg(unix)]
 fn write_protocol_message(
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<Mutex<DevStream>>,
     message: &ServerMessage,
 ) -> anyhow::Result<()> {
     let encoded = encode_protocol_message(message)?;
@@ -691,9 +687,7 @@ mod tests {
     }
 }
 
-#[cfg(not(unix))]
-fn run_dev_ipc(_repository: SqliteProfileRepository, _socket_path: PathBuf) -> anyhow::Result<()> {
-    warn!("development IPC listener is currently implemented for Unix domain sockets only");
-    std::thread::park();
-    Ok(())
+#[cfg(windows)]
+fn run_dev_ipc(repository: SqliteProfileRepository, _socket_path: PathBuf) -> anyhow::Result<()> {
+    windows_ipc::run(repository)
 }
